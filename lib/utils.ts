@@ -56,3 +56,24 @@ export const playSuccessSound = () => playSound('/sounds/success.mp3', 0.4);
 export const playErrorSound = () => playSound('/sounds/error.mp3', 0.6);
 export const playWarningSound = () => playSound('/sounds/warning.mp3', 0.5);
 export const playInfoSound = () => playSound('/sounds/info.mp3', 0.3);
+
+
+// lib/utils.ts (example - you might use a library like date-fns for more robust formatting)
+export function formatRelativeTime(dateString: string): string {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffSeconds = Math.round((now.getTime() - date.getTime()) / 1000);
+    const diffMinutes = Math.round(diffSeconds / 60);
+    const diffHours = Math.round(diffMinutes / 60);
+    const diffDays = Math.round(diffHours / 24);
+    const diffWeeks = Math.round(diffDays / 7);
+    const diffMonths = Math.round(diffDays / 30.44); // Average days in month
+
+    if (diffSeconds < 60) return `${diffSeconds}s ago`;
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffWeeks < 5) return `${diffWeeks}w ago`; // Up to 4 weeks
+    if (diffMonths < 12) return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); // "Mar 15"
+    return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); // "Mar 15, 2023"
+}
