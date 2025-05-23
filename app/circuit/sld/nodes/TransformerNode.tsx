@@ -2,10 +2,10 @@
 import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow';
 import { motion } from 'framer-motion';
-import { TransformerNodeData, DataPointLink, DataPoint } from '@/types/sld';
+import { TransformerNodeData, DataPointLink, DataPoint, SLDAction } from '@/types/sld'; // Added SLDAction
 import { useAppStore } from '@/stores/appStore';
 import { getDataPointValue, applyValueMapping, formatDisplayValue, getDerivedStyle } from './nodeUtils';
-import { GitBranchPlusIcon, AlertTriangleIcon } from 'lucide-react'; // Placeholder, ideally custom SVG
+import { GitBranchPlusIcon, AlertTriangleIcon, PlayIcon } from 'lucide-react'; // Added PlayIcon
 
 const TransformerNode: React.FC<NodeProps<TransformerNodeData>> = ({ data, selected, isConnectable }) => {
   const { isEditMode, currentUser, realtimeData, dataPoints } = useAppStore(state => ({
@@ -18,6 +18,11 @@ const TransformerNode: React.FC<NodeProps<TransformerNodeData>> = ({ data, selec
   const isNodeEditable = useMemo(() =>
     isEditMode && (currentUser?.role === 'admin'),
     [isEditMode, currentUser]
+  );
+
+  const hasActions = useMemo(() =>
+    !isEditMode && data.actions && data.actions.length > 0,
+    [isEditMode, data.actions]
   );
 
   const processedStatus = useMemo(() => {
@@ -106,13 +111,13 @@ const TransformerNode: React.FC<NodeProps<TransformerNodeData>> = ({ data, selec
 
   const mainDivClasses = `
     sld-node transformer-node group w-[80px] h-[85px] rounded-lg shadow-lg
-    flex flex-col items-center justify-between p-1.5
+    flex flex-col items-center justify-between p-1.5 relative
     border-2 ${derivedNodeStyles.borderColor ? '' : statusStyles.borderClass} 
     ${derivedNodeStyles.backgroundColor ? '' : statusStyles.bgClass}
     bg-card dark:bg-neutral-800 
     transition-all duration-150
     ${selected && isNodeEditable ? 'ring-2 ring-primary ring-offset-1' : selected ? 'ring-1 ring-accent' : ''}
-    ${isNodeEditable ? 'cursor-grab hover:shadow-xl' : 'cursor-default'}
+    ${hasActions ? 'cursor-pointer' : (isNodeEditable ? 'cursor-grab hover:shadow-xl' : 'cursor-default')}
   `;
   const textEffectiveClass = derivedNodeStyles.color ? '' : statusStyles.textClass;
 
@@ -121,10 +126,22 @@ const TransformerNode: React.FC<NodeProps<TransformerNodeData>> = ({ data, selec
     <motion.div
       className={mainDivClasses}
       style={derivedNodeStyles} // Apply all derived styles; specific properties can be overridden by classes if needed
-      variants={{ hover: { scale: isNodeEditable ? 1.03 : 1 }, initial: { scale: 1 } }}
-      whileHover="hover" initial="initial"
+      variants={{ 
+        initial: { scale: 1 },
+        hover: { scale: isNodeEditable ? 1.03 : 1 },
+        actionableHover: { scale: 1.04, boxShadow: "0px 0px 10px rgba(0, 123, 255, 0.5)" }
+      }}
+      whileHover={hasActions ? "actionableHover" : (isNodeEditable ? "hover" : undefined)}
+      initial="initial"
       transition={{ type: 'spring', stiffness: 300, damping: 12 }}
     >
+      {hasActions && (
+        <PlayIcon 
+          className="absolute top-1 right-1 text-blue-500 dark:text-blue-400 opacity-70 group-hover:opacity-100 transition-opacity" 
+          size={12} 
+          strokeWidth={2.5}
+        />
+      )}
       <Handle type="target" position={Position.Top} id="primary_in" isConnectable={isConnectable} className="!w-3 !h-3 sld-handle-style" title="Primary"/>
       <Handle type="source" position={Position.Bottom} id="secondary_out" isConnectable={isConnectable} className="!w-3 !h-3 sld-handle-style" title="Secondary"/>
 

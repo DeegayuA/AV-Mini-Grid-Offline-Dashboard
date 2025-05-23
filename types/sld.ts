@@ -51,6 +51,16 @@ export interface DataPointLink {
   };
 }
 
+export interface SLDAction {
+  actionId: string; 
+  label: string; 
+  dataPointId: string; 
+  valueToWrite: any; 
+  confirmationMessage?: string; 
+  successMessage?: string; 
+  errorMessage?: string; 
+}
+
 // --- Base Node Data (Common to all custom nodes) ---
 export interface BaseNodeData {
   label: string;
@@ -58,6 +68,7 @@ export interface BaseNodeData {
   status?: 'nominal' | 'warning' | 'alarm' | 'offline' | 'producing' | 'running' | 'reading' | 'connected' | 'closed' | 'open' | 'active' | 'charging' | 'discharging' | string;
   config?: Record<string, any>;
   dataPointLinks?: DataPointLink[];
+  actions?: SLDAction[]; 
   isDrillable?: boolean;
   subLayoutId?: string;
   notes?: string;
@@ -349,6 +360,7 @@ export interface SLDWidgetProps {
   isEditMode?: boolean;
   currentUserRole?: UserRole;
   onNavigateToLayout?: (layoutId: string) => void;
+  onExecuteAction?: (action: SLDAction) => Promise<{success: boolean, message?: string}>;
 }
 
 export interface CurrentUser {

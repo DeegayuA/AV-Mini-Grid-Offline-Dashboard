@@ -2,10 +2,10 @@
 import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow';
 import { motion } from 'framer-motion';
-import { BreakerNodeData, DataPointLink, DataPoint } from '@/types/sld';
+import { BreakerNodeData, DataPointLink, DataPoint, SLDAction } from '@/types/sld'; // Added SLDAction
 import { useAppStore } from '@/stores/appStore';
 import { getDataPointValue, applyValueMapping, getDerivedStyle } from './nodeUtils';
-import { ZapOffIcon, ZapIcon, ShieldAlertIcon, ShieldCheckIcon, AlertTriangleIcon } from 'lucide-react'; // Or custom SVG
+import { ZapOffIcon, ZapIcon, ShieldAlertIcon, ShieldCheckIcon, AlertTriangleIcon, PlayIcon } from 'lucide-react'; // Added PlayIcon
 
 const BreakerNode: React.FC<NodeProps<BreakerNodeData>> = ({ data, selected, isConnectable }) => {
   const { isEditMode, currentUser, realtimeData, dataPoints } = useAppStore(state => ({
@@ -18,6 +18,11 @@ const BreakerNode: React.FC<NodeProps<BreakerNodeData>> = ({ data, selected, isC
   const isNodeEditable = useMemo(() =>
     isEditMode && (currentUser?.role === 'admin'),
     [isEditMode, currentUser]
+  );
+
+  const hasActions = useMemo(() => 
+    !isEditMode && data.actions && data.actions.length > 0,
+    [isEditMode, data.actions]
   );
 
   // Determine breaker status from DataPointLinks or fallback to data.status
@@ -90,20 +95,31 @@ const BreakerNode: React.FC<NodeProps<BreakerNodeData>> = ({ data, selected, isC
     <motion.div
       className={`
         sld-node breaker-node group w-[70px] h-[90px] rounded-md shadow-md
-        flex flex-col items-center justify-between p-1.5 
+        flex flex-col items-center justify-between p-1.5 relative
         border-2 ${statusStyles.border} ${statusStyles.bg}
         bg-card dark:bg-neutral-800
         transition-all duration-150
         ${selected && isNodeEditable ? 'ring-2 ring-primary ring-offset-1 dark:ring-offset-neutral-900' : 
           selected ? 'ring-1 ring-accent dark:ring-offset-neutral-900' : ''}
-        ${isNodeEditable ? 'cursor-grab hover:shadow-lg' : 'cursor-default'}
+        ${hasActions ? 'cursor-pointer' : (isNodeEditable ? 'cursor-grab hover:shadow-lg' : 'cursor-default')}
       `}
       style={derivedNodeStyles} // Apply derived styles here
-      variants={{ hover: { scale: isNodeEditable ? 1.04 : 1 }, initial: { scale: 1 } }}
-      whileHover="hover"
+      variants={{ 
+        initial: { scale: 1 },
+        hover: { scale: isNodeEditable ? 1.04 : 1 }, // Standard hover for editable nodes
+        actionableHover: { scale: 1.05, boxShadow: "0px 0px 12px rgba(0, 123, 255, 0.6)" } // Enhanced hover for actionable nodes in view mode
+      }}
+      whileHover={hasActions ? "actionableHover" : (isNodeEditable ? "hover" : undefined)}
       initial="initial"
       transition={{ type: 'spring', stiffness: 300, damping: 10 }}
     >
+      {hasActions && (
+        <PlayIcon 
+          className="absolute top-1 right-1 text-blue-500 dark:text-blue-400 opacity-70 group-hover:opacity-100 transition-opacity" 
+          size={12} 
+          strokeWidth={2.5}
+        />
+      )}
       <Handle type="target" position={Position.Top} id="top_in" isConnectable={isConnectable} className="!w-3 !h-3 !bg-slate-400 !border-slate-500 react-flow__handle-common sld-handle-style" />
       <Handle type="source" position={Position.Bottom} id="bottom_out" isConnectable={isConnectable} className="!w-3 !h-3 !bg-slate-400 !border-slate-500 react-flow__handle-common sld-handle-style" />
 

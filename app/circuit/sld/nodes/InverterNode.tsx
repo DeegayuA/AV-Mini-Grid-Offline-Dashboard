@@ -2,10 +2,10 @@
 import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow';
 import { motion } from 'framer-motion';
-import { InverterNodeData, DataPointLink, DataPoint } from '@/types/sld';
+import { InverterNodeData, DataPointLink, DataPoint, SLDAction } from '@/types/sld'; // Added SLDAction
 import { useAppStore } from '@/stores/appStore';
 import { getDataPointValue, applyValueMapping, formatDisplayValue, getDerivedStyle } from './nodeUtils';
-import { ZapIcon, RefreshCwIcon, AlertTriangleIcon, CheckCircleIcon } from 'lucide-react'; // Example icons
+import { ZapIcon, RefreshCwIcon, AlertTriangleIcon, CheckCircleIcon, PlayIcon } from 'lucide-react'; // Added PlayIcon
 
 const InverterNode: React.FC<NodeProps<InverterNodeData>> = ({ data, selected, isConnectable }) => {
   const { isEditMode, currentUser, realtimeData, dataPoints } = useAppStore(state => ({
@@ -18,6 +18,11 @@ const InverterNode: React.FC<NodeProps<InverterNodeData>> = ({ data, selected, i
   const isNodeEditable = useMemo(() => 
     isEditMode && (currentUser?.role === 'admin'),
     [isEditMode, currentUser]
+  );
+
+  const hasActions = useMemo(() =>
+    !isEditMode && data.actions && data.actions.length > 0,
+    [isEditMode, data.actions]
   );
 
   const processedStatus = useMemo(() => {
@@ -107,19 +112,30 @@ const InverterNode: React.FC<NodeProps<InverterNodeData>> = ({ data, selected, i
     <motion.div
       className={`
         sld-node inverter-node group w-[90px] h-[70px] rounded-lg shadow-sm
-        flex flex-col items-center justify-between p-2
+        flex flex-col items-center justify-between p-2 relative
         border-2 
         transition-all duration-150
         ${selected && isNodeEditable ? 'ring-2 ring-primary ring-offset-1 dark:ring-offset-neutral-900' : 
           selected ? 'ring-1 ring-accent dark:ring-offset-neutral-900' : ''}
-        ${isNodeEditable ? 'cursor-pointer hover:shadow-lg' : 'cursor-default'}
+        ${hasActions ? 'cursor-pointer' : (isNodeEditable ? 'cursor-pointer hover:shadow-lg' : 'cursor-default')}
       `}
       style={componentStyle} // Apply combined dynamic styles
-      variants={{ hover: { scale: isNodeEditable ? 1.04 : 1 }, initial: { scale: 1 } }}
-      whileHover="hover"
+      variants={{ 
+        initial: { scale: 1 },
+        hover: { scale: isNodeEditable ? 1.04 : 1 },
+        actionableHover: { scale: 1.05, boxShadow: "0px 0px 10px rgba(0, 123, 255, 0.5)" }
+      }}
+      whileHover={hasActions ? "actionableHover" : (isNodeEditable ? "hover" : undefined)}
       initial="initial"
       transition={{ type: 'spring', stiffness: 300, damping: 10 }}
     >
+      {hasActions && (
+        <PlayIcon 
+          className="absolute top-1 right-1 text-blue-500 dark:text-blue-400 opacity-70 group-hover:opacity-100 transition-opacity" 
+          size={12} 
+          strokeWidth={2.5}
+        />
+      )}
       {/* DC Input */}
       <Handle
         type="target"
@@ -144,7 +160,7 @@ const InverterNode: React.FC<NodeProps<InverterNodeData>> = ({ data, selected, i
           animate={isDeviceRunning && StatusIcon === RefreshCwIcon ? { rotate: 360 } : { rotate: 0 }}
           transition={isDeviceRunning && StatusIcon === RefreshCwIcon ? { loop: Infinity, ease: "linear", duration: 4 } : { duration: 0.5 }}
         >
-          <StatusIcon size={18} className={statusStyles.iconColor} style={{ color: derivedNodeStyles.color || statusStyles.iconColor }} />
+          <StatusIcon size={18} className={statusStyles.iconColor} style={{ color: derivedNodeStyles.iconColor || derivedNodeStyles.color || statusStyles.iconColor }} />
         </motion.div>
       </div>
       <p className="text-[10px] font-semibold leading-tight mt-auto text-center truncate w-full" title={data.label} style={{ color: derivedNodeStyles.color || statusStyles.textColor }}>

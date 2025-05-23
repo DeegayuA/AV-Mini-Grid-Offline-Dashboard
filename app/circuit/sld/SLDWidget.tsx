@@ -64,7 +64,6 @@ import SLDElementDetailSheet from './ui/SLDElementDetailSheet';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import SLDDrillDownDialog from './ui/SLDDrillDownDialog';
-import FuseNode from './nodes/FuseNode';
 
 interface WebSocketMessageFromServer {
   type: string;
@@ -78,7 +77,6 @@ const nodeTypes: NodeTypes = {
     [SLDElementType.Panel]: PanelNode,
     // Uncomment and ensure you have the component files if you use these types:
     [SLDElementType.Breaker]: BreakerNode,
-    [SLDElementType.Fuse]: FuseNode, // Assuming same as Breaker for now
     [SLDElementType.Meter]: MeterNode,    
     [SLDElementType.Battery]: BatteryNode, 
     [SLDElementType.Contactor]: ContactorNode, 
@@ -90,7 +88,6 @@ const nodeTypes: NodeTypes = {
     [SLDElementType.Generator]: GeneratorNode,
     [SLDElementType.PLC]: PLCNode,
     [SLDElementType.Sensor]: SensorNode,
-
 };
 const edgeTypes: EdgeTypes = { animatedFlow: AnimatedFlowEdge };
 const defaultEdgeOptions = { type: 'animatedFlow', style: { strokeWidth: 3 }, data: {} as CustomFlowEdgeData };
@@ -129,6 +126,7 @@ const SLDWidgetCore: React.FC<SLDWidgetCoreProps> = ({
   layoutId,
   isEditMode: isEditModeFromProps,
   onLayoutIdChange,
+  onExecuteAction, // Destructure onExecuteAction
 }) => {
   const { theme: currentThemeHookValue } = useTheme();
   const { sendJsonMessage, lastJsonMessage, isConnected: isWebSocketConnected, connect: connectWebSocket } = useWebSocket();
@@ -571,7 +569,7 @@ const SLDWidgetCore: React.FC<SLDWidgetCoreProps> = ({
         </ReactFlow>
       </div>
       {canEdit && selectedElement && ( <SLDInspectorDialog isOpen={isInspectorDialogOpen} onOpenChange={(open) => { setIsInspectorDialogOpen(open); if (!open) setSelectedElement(null);}} selectedElement={selectedElement} onUpdateElement={handleUpdateElement} onDeleteElement={handleDeleteElement}/> )}
-      {!canEdit && selectedElement && (isNode(selectedElement) || isEdge(selectedElement)) && ( <SLDElementDetailSheet element={selectedElement} isOpen={isDetailSheetOpen} onOpenChange={(open) => { setIsDetailSheetOpen(open); if (!open) setSelectedElement(null);}} /> )}
+      {!canEdit && selectedElement && (isNode(selectedElement) || isEdge(selectedElement)) && ( <SLDElementDetailSheet element={selectedElement} isOpen={isDetailSheetOpen} onOpenChange={(open) => { setIsDetailSheetOpen(open); if (!open) setSelectedElement(null);}} onExecuteAction={onExecuteAction} /> )}
       {isDrillDownOpen && drillDownLayoutId && ( <SLDDrillDownDialog isOpen={isDrillDownOpen} onOpenChange={(open) => { setIsDrillDownOpen(open); if (!open) { setDrillDownLayoutId(null); setSelectedElement(null); }}} layoutId={drillDownLayoutId} parentLabel={drillDownParentLabel} /> )}
     </motion.div>
   );

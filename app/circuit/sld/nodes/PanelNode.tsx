@@ -2,10 +2,10 @@
 import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow';
 import { motion } from 'framer-motion';
-import { PanelNodeData, DataPointLink, DataPoint } from '@/types/sld';
+import { PanelNodeData, DataPointLink, DataPoint, SLDAction } from '@/types/sld'; // Added SLDAction
 import { useAppStore } from '@/stores/appStore';
 import { getDataPointValue, applyValueMapping, formatDisplayValue, getDerivedStyle } from './nodeUtils';
-import { SunIcon, AlertTriangleIcon, CheckCircleIcon } from 'lucide-react';
+import { SunIcon, AlertTriangleIcon, CheckCircleIcon, PlayIcon } from 'lucide-react'; // Added PlayIcon
 
 const PanelNode: React.FC<NodeProps<PanelNodeData>> = ({ data, selected, isConnectable }) => {
   const { isEditMode, currentUser, realtimeData, dataPoints } = useAppStore(state => ({
@@ -18,6 +18,11 @@ const PanelNode: React.FC<NodeProps<PanelNodeData>> = ({ data, selected, isConne
   const isNodeEditable = useMemo(() => 
     isEditMode && (currentUser?.role === 'admin'),
     [isEditMode, currentUser]
+  );
+
+  const hasActions = useMemo(() =>
+    !isEditMode && data.actions && data.actions.length > 0,
+    [isEditMode, data.actions]
   );
 
   const processedStatus = useMemo(() => {
@@ -105,22 +110,30 @@ const PanelNode: React.FC<NodeProps<PanelNodeData>> = ({ data, selected, isConne
         transition-all duration-200 ease-in-out
         ${selected && isNodeEditable ? 'ring-2 ring-primary ring-offset-2 dark:ring-offset-neutral-900 shadow-primary/30' : 
           selected ? 'ring-1 ring-accent ring-offset-1 dark:ring-offset-neutral-900 shadow-accent/20' : 
-          'hover:shadow-md'} 
-        ${isNodeEditable ? 'cursor-grab' : 'cursor-default'}
+          ''} 
+        ${hasActions ? 'cursor-pointer' : (isNodeEditable ? 'cursor-grab' : 'cursor-default')}
         ${statusClasses} 
       `}
       style={componentStyle}
       variants={{ 
+        initial: { scale: 1 },
         hover: { 
           scale: isNodeEditable ? 1.04 : 1, 
           boxShadow: isNodeEditable ? "0px 5px 15px rgba(0,0,0,0.1)" : "0px 2px 8px rgba(0,0,0,0.07)" 
-        }, 
-        initial: { scale: 1 } 
+        },
+        actionableHover: { scale: 1.05, boxShadow: "0px 0px 12px rgba(0, 123, 255, 0.6)" }
       }}
-      whileHover="hover"
+      whileHover={hasActions ? "actionableHover" : (isNodeEditable ? "hover" : undefined)}
       initial="initial"
       transition={{ type: 'spring', stiffness: 350, damping: 12 }}
     >
+      {hasActions && (
+        <PlayIcon 
+          className="absolute top-1 right-1 text-blue-500 dark:text-blue-400 opacity-70 group-hover:opacity-100 transition-opacity" 
+          size={10} 
+          strokeWidth={2.5}
+        />
+      )}
       {/* --- TOP HANDLE (TARGET - INPUT) --- */}
       <Handle
         type="target" 

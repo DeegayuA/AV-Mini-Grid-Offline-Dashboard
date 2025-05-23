@@ -1,13 +1,14 @@
 // components/sld/ui/SLDInspectorDialog.tsx
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Node, Edge, isEdge as isReactFlowEdge } from 'reactflow';
+import { Node, Edge, isEdge } from 'reactflow';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Trash2, PlusCircle, MinusCircle, X, Info, Sparkles, PencilLine, Link2, Settings2, Palmtree, Palette as PaletteIcon, CaseSensitive, AlignLeftIcon, BaselineIcon } from 'lucide-react';
+import { Textarea } from "@/components/ui/textarea";
+import { Trash2, PlusCircle, MinusCircle, X, Info, Sparkles, PencilLine, Link2, Settings2, Palmtree, Palette as PaletteIcon, CaseSensitive, AlignLeftIcon, BaselineIcon, PlayCircle } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import {
     Dialog,
@@ -28,15 +29,15 @@ import {
 import {
     CustomNodeData, CustomFlowEdgeData, DataPoint,
     DataPointLink, SLDElementType, CustomNodeType, CustomFlowEdge,
-    TextLabelNodeData, TextNodeStyleConfig,
+    TextLabelNodeData, TextNodeStyleConfig, SLDAction,
     ContactorNodeData, InverterNodeData, PanelNodeData, BreakerNodeData, MeterNodeData,
     BatteryNodeData, GridNodeData, LoadNodeData, BusbarNodeData, TransformerNodeData,
     GeneratorNodeData, PLCNodeData, SensorNodeData, GenericDeviceNodeData, IsolatorNodeData,
     ATSNodeData, JunctionBoxNodeData, FuseNodeData,
-    BaseNodeData, // Import BaseNodeData for common properties
+    BaseNodeData, 
 } from '@/types/sld';
 import { useAppStore } from '@/stores/appStore';
-import { ComboboxOption, SearchableSelect } from './SearchableSelect'; // Ensure this component is robust
+import { ComboboxOption, SearchableSelect } from './SearchableSelect'; 
 import { AVAILABLE_SLD_LAYOUT_IDS } from '@/config/constants';
 
 interface SLDInspectorDialogProps {
@@ -47,7 +48,6 @@ interface SLDInspectorDialogProps {
     onDeleteElement: (elementId: string) => void;
 }
 
-// --- Helper Data and Functions ---
 const targetPropertiesOptions: ComboboxOption[] = [
     { value: 'label', label: 'Display Label', description: "Sets the main text label visible on/near the element." },
     { value: 'text', label: 'Static Text (TextLabel)', description: "Sets the primary static text content for a TextLabel node." },
@@ -63,10 +63,8 @@ const targetPropertiesOptions: ComboboxOption[] = [
     { value: 'currentLoadPercent', label: 'Load Percentage (Edge/Device)', description: 'Represents load from 0-100%. Can affect visuals like animation speed or color intensity.' },
     { value: 'isEnergized', label: 'Energized State (Edge/Device)', description: 'Boolean: true if energized, false if de-energized. Affects color/animation.'},
     { value: 'status', label: 'Device Status (Generic)', description: 'General status string e.g., "FAULT", "WARNING", "NOMINAL", "OFFLINE". Can drive color changes.' },
-    // Node-specific potentially:
     { value: 'inverter.powerOutput', label: 'Inverter Power Output', description: 'Displays power value specifically for Inverter nodes.' },
     { value: 'breaker.isOpen', label: 'Breaker Open State', description: 'Boolean: true if breaker is open, false if closed.'},
-    // Add more properties as your system grows and components support them
 ];
 
 const fontSizes = [
@@ -84,10 +82,6 @@ const fontWeights = [
 
 function isNode(element: any): element is CustomNodeType {
     return element && 'position' in element && 'data' in element && 'id' in element;
-}
-
-function isEdge(element: any): element is CustomFlowEdge { // Already defined, assuming correct
-    return element && 'source' in element && 'target' in element && 'id' in element;
 }
 
 const getElementTypeName = (element: CustomNodeType | CustomFlowEdge | null): string => {
@@ -123,7 +117,6 @@ const getElementTypeName = (element: CustomNodeType | CustomFlowEdge | null): st
     return 'Diagram Element';
 };
 
-// --- Main Component ---
 const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
     isOpen, onOpenChange, selectedElement, onUpdateElement, onDeleteElement
 }) => {
@@ -131,13 +124,14 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
     
     const [formData, setFormData] = useState<Partial<CustomNodeData & CustomFlowEdgeData & { styleConfig?: TextNodeStyleConfig }>>({});
     const [dataLinks, setDataLinks] = useState<DataPointLink[]>([]);
+    const [actionsConfig, setActionsConfig] = useState<SLDAction[]>([]);
     const [activeTab, setActiveTab] = useState<string>("properties");
 
     useEffect(() => {
         if (isOpen && selectedElement) {
             const elementDataCopy = JSON.parse(JSON.stringify(selectedElement.data ?? {}));
             
-            const initialFormData: Partial<CustomNodeData & CustomFlowEdgeData & { styleConfig?: TextNodeStyleConfig }> = {
+            const initialFormData: Partial<CustomNodeData & CustomFlowEdgeData & { styleConfig?: TextNodeStyleConfig, actions?: SLDAction[] }> = {
                 ...elementDataCopy,
                 label: elementDataCopy.label || '',
             };
@@ -148,25 +142,25 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
                     (initialFormData as Partial<TextLabelNodeData>).text = (elementDataCopy as TextLabelNodeData).text || '';
                     initialFormData.styleConfig = (elementDataCopy as TextLabelNodeData).styleConfig || {};
                 }
-                // Ensure config is an object for all node types
                 initialFormData.config = elementDataCopy.config && typeof elementDataCopy.config === 'object' 
                                          ? elementDataCopy.config 
                                          : {};
+                initialFormData.actions = elementDataCopy.actions || [];
             } else if (isEdge(selectedElement)) {
-                 // For edges, ensure specific properties are initialized if not present
                 initialFormData.flowType = elementDataCopy.flowType || '';
                 initialFormData.voltageLevel = elementDataCopy.voltageLevel || '';
                 initialFormData.currentRatingAmps = elementDataCopy.currentRatingAmps ?? '';
                 initialFormData.cableType = elementDataCopy.cableType || '';
             }
 
-
             setFormData(initialFormData);
             setDataLinks(elementDataCopy.dataPointLinks ?? []);
+            setActionsConfig(elementDataCopy.actions ?? []);
             setActiveTab("properties");
         } else if (!isOpen) {
             setFormData({});
             setDataLinks([]);
+            setActionsConfig([]);
         }
     }, [selectedElement, isOpen]);
 
@@ -323,9 +317,36 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
         }));
     }, []);
 
+    // Action Configuration Handlers
+    const handleActionChange = useCallback((index: number, field: keyof SLDAction, value: any) => {
+        setActionsConfig(prevActions => 
+            prevActions.map((action, i) => 
+                i === index ? { ...action, [field]: value } : action
+            )
+        );
+    }, []);
+
+    const addAction = useCallback(() => {
+        setActionsConfig(prev => [...prev, { 
+            actionId: crypto.randomUUID(), 
+            label: '', 
+            dataPointId: '', 
+            valueToWrite: '',
+            confirmationMessage: '',
+            successMessage: '',
+            errorMessage: ''
+        }]);
+    }, []);
+    
+    const removeAction = useCallback((index: number) => {
+        setActionsConfig(prev => prev.filter((_, i) => i !== index));
+    }, []);
+
+
     const handleSaveChangesAndClose = useCallback(() => {
         if (!selectedElement) return;
         const validDataLinks = dataLinks.filter(link => link.dataPointId && link.targetProperty);
+        const validActions = actionsConfig.filter(action => action.label && action.dataPointId && action.valueToWrite !== undefined && action.valueToWrite !== '');
         
         let updatedElementData: CustomNodeData | CustomFlowEdgeData;
 
@@ -334,6 +355,7 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
                 label: formData.label || selectedElement.data?.label || 'Unnamed Element',
                 elementType: selectedElement.data.elementType,
                 dataPointLinks: validDataLinks.length > 0 ? validDataLinks : undefined,
+                actions: validActions.length > 0 ? validActions : undefined,
                 config: formData.config && Object.keys(formData.config).length > 0 ? formData.config : undefined,
                 isDrillable: !!formData.isDrillable,
                 subLayoutId: formData.isDrillable ? formData.subLayoutId : undefined,
@@ -365,7 +387,7 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
         
         onUpdateElement({ ...selectedElement, data: updatedElementData as any }); 
         onOpenChange(false);
-    }, [selectedElement, formData, dataLinks, onUpdateElement, onOpenChange]);
+    }, [selectedElement, formData, dataLinks, actionsConfig, onUpdateElement, onOpenChange]);
 
     const handleDeleteAndClose = useCallback(() => {
         if (selectedElement) {
@@ -380,7 +402,7 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
     const currentElementType = isNode(selectedElement) ? selectedElement.data.elementType : undefined;
 
     const renderDataLinkCard = (link: DataPointLink, index: number) => (
-        <Card key={index} className="overflow-hidden shadow-md hover:shadow-lg transition-shadow duration-200 border-border/60 bg-card">
+        <Card key={`datalink-${index}`} className="overflow-hidden shadow-md hover:shadow-lg transition-shadow duration-200 border-border/60 bg-card">
             <CardHeader className="p-3 bg-muted/30 border-b border-border/60 flex flex-row justify-between items-center">
                 <CardTitle className="text-sm font-semibold flex items-center">
                     <Link2 className="w-4 h-4 mr-2 text-primary" />
@@ -490,6 +512,46 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
             </CardContent>
         </Card>
     );
+
+    const renderActionCard = (action: SLDAction, index: number) => (
+        <Card key={action.actionId} className="overflow-hidden shadow-md hover:shadow-lg transition-shadow duration-200 border-border/60 bg-card">
+            <CardHeader className="p-3 bg-muted/30 border-b border-border/60 flex flex-row justify-between items-center">
+                <CardTitle className="text-sm font-semibold flex items-center">
+                    <PlayCircle className="w-4 h-4 mr-2 text-primary" />
+                    Action {index + 1}
+                </CardTitle>
+                 <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeAction(index)}>
+                                <MinusCircle className="h-4 w-4 text-destructive hover:text-destructive/80" />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent><p>Remove this Action</p></TooltipContent>
+                    </Tooltip>
+                </TooltipProvider>
+            </CardHeader>
+            <CardContent className="p-3 space-y-3">
+                <FieldInput id={`action-label-${index}`} label="Action Label" value={action.label} onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleActionChange(index, 'label', e.target.value)} placeholder="e.g., Start Motor, Open Valve" />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                        <Label htmlFor={`action-dp-${index}`} className="text-xs font-medium">Target Data Point <span className="text-red-500">*</span></Label>
+                        <SearchableSelect options={dataPointOptions.filter(dp => dataPoints[dp.value]?.isWritable)} value={action.dataPointId || ''} onChange={(value) => handleActionChange(index, 'dataPointId', value)} placeholder="Select Writable Data Point..." searchPlaceholder="Search writable points..." notFoundText="No writable data points." />
+                        {action.dataPointId && dataPoints[action.dataPointId] && <p className="text-xs text-muted-foreground pt-1">Type: {dataPoints[action.dataPointId].dataType}, Unit: {dataPoints[action.dataPointId].unit || "N/A"}</p>}
+                    </div>
+                    <FieldInput id={`action-value-${index}`} label="Value to Write" value={action.valueToWrite} onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleActionChange(index, 'valueToWrite', e.target.value)} placeholder="e.g., true, 100, 'START'" />
+                </div>
+                <div className="space-y-1">
+                    <Label htmlFor={`action-confirm-${index}`} className="text-xs font-medium">Confirmation Message (Optional)</Label>
+                    <Textarea id={`action-confirm-${index}`} value={action.confirmationMessage || ''} onChange={(e) => handleActionChange(index, 'confirmationMessage', e.target.value)} placeholder="e.g., Are you sure you want to start the motor?" className="text-xs min-h-[40px]" rows={2}/>
+                </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <FieldInput id={`action-success-${index}`} label="Success Message (Optional)" value={action.successMessage || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleActionChange(index, 'successMessage', e.target.value)} placeholder="e.g., Motor started successfully." />
+                    <FieldInput id={`action-error-${index}`} label="Error Message (Optional)" value={action.errorMessage || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleActionChange(index, 'errorMessage', e.target.value)} placeholder="e.g., Failed to start motor." />
+                </div>
+            </CardContent>
+        </Card>
+    );
     
     const FieldInput = ({ id, label, value, onChange, type = "text", placeholder, name: fieldName, ...props }: any) => (
         <div className="space-y-0.5">
@@ -526,12 +588,15 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
 
                 <ScrollArea className="flex-grow overflow-y-auto focus-visible:ring-0 focus-visible:ring-offset-0" id="inspector-scroll-area">
                     <Tabs defaultValue={activeTab} onValueChange={setActiveTab} className="w-full">
-                        <TabsList className="grid w-full grid-cols-2 h-11 sticky top-0 bg-background/90 backdrop-blur-sm z-[9] border-b border-border/60 rounded-none">
+                        <TabsList className="grid w-full grid-cols-3 h-11 sticky top-0 bg-background/90 backdrop-blur-sm z-[9] border-b border-border/60 rounded-none">
                             <TabsTrigger value="properties" className="text-sm data-[state=active]:border-primary data-[state=active]:border-b-2 data-[state=active]:text-primary rounded-none h-full">
                                 <Settings2 className="w-4 h-4 mr-2" />Properties
                             </TabsTrigger>
                             <TabsTrigger value="data_linking" className="text-sm data-[state=active]:border-primary data-[state=active]:border-b-2 data-[state=active]:text-primary rounded-none h-full">
                                 <Link2 className="w-4 h-4 mr-2" />Data Linking
+                            </TabsTrigger>
+                            <TabsTrigger value="actions" className="text-sm data-[state=active]:border-primary data-[state=active]:border-b-2 data-[state=active]:text-primary rounded-none h-full" disabled={!isNode(selectedElement)}>
+                                <PlayCircle className="w-4 h-4 mr-2" />Actions
                             </TabsTrigger>
                         </TabsList>
 
@@ -825,6 +890,32 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
                                     <Button variant="outline" size="sm" onClick={addDataLink} className="w-full h-9">
                                         <PlusCircle className="h-4 w-4 mr-2" /> Add Another Data Link
                                     </Button>
+                                )}
+                            </TabsContent>
+                            <TabsContent value="actions" className="mt-0 space-y-4 outline-none">
+                                {isNode(selectedElement) ? (
+                                    <>
+                                        {actionsConfig.length === 0 && (
+                                            <div className="text-center py-10 px-6 bg-muted/30 rounded-lg border border-dashed border-border/50">
+                                                <PlayCircle className="mx-auto h-12 w-12 text-muted-foreground/70" />
+                                                <h3 className="mt-2 text-lg font-semibold text-foreground">No Actions Configured</h3>
+                                                <p className="mt-1 text-sm text-muted-foreground">
+                                                    Define actions that can be triggered for this element (e.g., writing to a data point).
+                                                </p>
+                                                <Button variant="default" size="sm" onClick={addAction} className="mt-6 h-9">
+                                                    <PlusCircle className="h-4 w-4 mr-2" /> Add First Action
+                                                </Button>
+                                            </div>
+                                        )}
+                                        {actionsConfig.map(renderActionCard)}
+                                        {actionsConfig.length > 0 && (
+                                            <Button variant="outline" size="sm" onClick={addAction} className="w-full h-9">
+                                                <PlusCircle className="h-4 w-4 mr-2" /> Add Another Action
+                                            </Button>
+                                        )}
+                                    </>
+                                ) : (
+                                    <p className="text-sm text-muted-foreground text-center py-10">Actions can only be configured for node elements.</p>
                                 )}
                             </TabsContent>
                         </div>
