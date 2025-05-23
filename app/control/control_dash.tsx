@@ -45,6 +45,7 @@ import SoundToggle from '../DashboardData/SoundToggle';
 import ThemeToggle from '../DashboardData/ThemeToggle';
 import DashboardSection from '../DashboardData/DashboardSection';
 import { UserRole } from '@/types/auth';
+import { SLDAction } from '@/types/sld'; // Import SLDAction
 import SLDWidget from "../circuit/sld/SLDWidget";
 import { useDynamicDefaultDataPointIds } from '../utils/defaultDataPoints';
 import PowerTimelineGraph, { TimeScale } from './PowerTimelineGraph';
@@ -663,7 +664,68 @@ const UnifiedDashboardPage: React.FC = () => {
   
   const sldSpecificEditMode = isGlobalEditMode && currentUserRole === UserRole.ADMIN;
   const sldSectionMinHeight = "400px";
-  const sldInternalMaxHeight = `calc(${sldSectionMinHeight} - 2.5rem)`; 
+  const sldInternalMaxHeight = `calc(${sldSectionMinHeight} - 2.5rem)`;
+
+  const handleExecuteSldAction = useCallback(async (action: SLDAction): Promise<{success: boolean, message?: string}> => {
+    if (!ws.current || ws.current.readyState !== WebSocket.OPEN) {
+      toast.error("Action Failed", { description: "WebSocket not connected." });
+      return { success: false, message: 'WebSocket not connected.' };
+    }
+
+    const pointConfig = allPossibleDataPoints.find(p => p.nodeId === action.dataPointId);
+    if (!pointConfig?.isWritable) {
+        toast.error("Action Failed", { description: `Data point ${action.dataPointId} is not writable.` });
+        return { success: false, message: `Data point ${action.dataPointId} is not writable.` };
+    }
+
+    // Basic type coercion based on pointConfig.dataType (similar to sendDataToWebSocket)
+    let valueToWrite = action.valueToWrite;
+    if (pointConfig?.dataType.includes('Int')) {
+        const num = parseInt(String(valueToWrite), 10);
+        if (isNaN(num)) {
+            toast.error("Action Failed", { description: `Invalid integer value for ${action.dataPointId}.` });
+            return { success: false, message: `Invalid integer value for ${action.dataPointId}.` };
+        }
+        valueToWrite = num;
+    } else if (pointConfig?.dataType === 'Boolean') {
+        if (String(valueToWrite).toLowerCase() === 'true' || valueToWrite === '1') valueToWrite = true;
+        else if (String(valueToWrite).toLowerCase() === 'false' || valueToWrite === '0') valueToWrite = false;
+        else {
+            toast.error("Action Failed", { description: `Invalid boolean value for ${action.dataPointId}.` });
+            return { success: false, message: `Invalid boolean value for ${action.dataPointId}.` };
+        }
+    } else if (pointConfig?.dataType === 'Float' || pointConfig?.dataType === 'Double') {
+        const num = parseFloat(String(valueToWrite));
+        if (isNaN(num)) {
+            toast.error("Action Failed", { description: `Invalid numeric value for ${action.dataPointId}.` });
+            return { success: false, message: `Invalid numeric value for ${action.dataPointId}.` };
+        }
+        valueToWrite = num;
+    }
+    // Add more type coercions if necessary for other data types
+
+    const messagePayload = {
+      type: "execute-sld-action",
+      payload: {
+        dataPointId: action.dataPointId,
+        valueToWrite: valueToWrite, // Use coerced value
+        actionId: action.actionId, // Optional, but good for logging/tracing
+        // Could add elementId if needed: action.elementId (if you add it to SLDAction type)
+      }
+    };
+
+    try {
+      ws.current.send(JSON.stringify(messagePayload));
+      // Assuming success if send doesn't throw immediately. 
+      // Actual confirmation would require a response from the server.
+      // The SLDInspectorDialog will show the success/error message from the action config.
+      return { success: true };
+    } catch (error) {
+      console.error("Failed to send SLD action via WebSocket:", error);
+      toast.error("Action Send Error", { description: "Failed to send action to server." });
+      return { success: false, message: 'Failed to send action to server.' };
+    }
+  }, [ws, allPossibleDataPoints]); // Added ws and allPossibleDataPoints to dependencies
 
   const commonRenderingProps = {
     isEditMode: isGlobalEditMode && currentUserRole === UserRole.ADMIN,
@@ -765,7 +827,7 @@ const UnifiedDashboardPage: React.FC = () => {
                 <SLDWidget
                   layoutId={sldLayoutId}
                   isEditMode={sldSpecificEditMode}
-
+                  onExecuteAction={handleExecuteSldAction}
                 />
               </div>
             </CardContent>
@@ -864,6 +926,7 @@ const UnifiedDashboardPage: React.FC = () => {
             <SLDWidget
               layoutId={sldLayoutId}
               isEditMode={sldSpecificEditMode}
+              onExecuteAction={handleExecuteSldAction}
             />
           </div>
         </DialogContent>

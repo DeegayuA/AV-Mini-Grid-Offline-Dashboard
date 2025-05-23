@@ -634,6 +634,7 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
                                         <CardHeader className='p-4'><CardTitle className='text-base font-semibold'>Inverter Configuration</CardTitle></CardHeader>
                                         <CardContent className='p-4 pt-0 space-y-4'>
                                             <FieldInput type="number" id="config.ratedPower" name="config.ratedPower" label="Rated Power (kW)" value={(formData.config as InverterNodeData['config'])?.ratedPower ?? ''} onChange={handleInputChange} placeholder="e.g., 5" step="0.1" min="0" />
+                                            <FieldInput type="number" id="config.efficiency" name="config.efficiency" label="Efficiency (%)" value={(formData.config as InverterNodeData['config'])?.efficiency ?? ''} onChange={handleInputChange} placeholder="e.g., 98.5" step="0.1" min="0" max="100" />
                                         </CardContent>
                                     </Card>
                                 )}
@@ -642,6 +643,7 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
                                         <CardHeader className='p-4'><CardTitle className='text-base font-semibold'>Contactor Configuration</CardTitle></CardHeader>
                                         <CardContent className='p-4 pt-0 space-y-4'>
                                             <div className="space-y-1"> <Label htmlFor="config.normallyOpen" className="text-xs">Default Contact Type</Label> <Select name="config.normallyOpen" value={String((formData.config as ContactorNodeData['config'])?.normallyOpen ?? true)} onValueChange={(val) => handleSelectChange("config.normallyOpen", val === 'true')}> <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger> <SelectContent><SelectItem value="true" className="text-xs">Normally Open (NO)</SelectItem><SelectItem value="false" className="text-xs">Normally Closed (NC)</SelectItem></SelectContent> </Select> </div>
+                                            <FieldInput id="config.coilVoltage" name="config.coilVoltage" label="Coil Voltage" value={(formData.config as ContactorNodeData['config'])?.coilVoltage ?? ''} onChange={handleInputChange} placeholder="e.g., 24VDC, 230VAC" />
                                         </CardContent>
                                     </Card>
                                 )}
