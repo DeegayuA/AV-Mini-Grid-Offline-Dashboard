@@ -272,3 +272,35 @@ export function getDerivedPrimaryDisplay(
     // Now format this mappedValue (or rawValue if mapping didn't change it)
     return formatDisplayValue(mappedValue, displayLink.format, dpMetadata.dataType);
 }
+
+
+// Add to nodeUtils.ts
+
+import {
+  BoxIcon,
+  AlertTriangleIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+  ZapIcon,
+  HelpCircleIcon,
+  LucideIcon
+} from 'lucide-react';
+
+/**
+ * Maps a string icon name to a Lucide icon component.
+ */
+export function mapIconByName(name?: string): LucideIcon | undefined {
+  if (!name) return undefined;
+
+  const iconMap: Record<string, LucideIcon> = {
+    box: BoxIcon,
+    alert: AlertTriangleIcon,
+    check: CheckCircleIcon,
+    xcircle: XCircleIcon,
+    zap: ZapIcon,
+    help: HelpCircleIcon,
+    // Add more mappings as needed
+  };
+
+  return iconMap[name.toLowerCase()] || undefined;
+}
