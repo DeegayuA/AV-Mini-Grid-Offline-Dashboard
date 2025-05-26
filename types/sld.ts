@@ -32,27 +32,39 @@ export interface DataPointLink {
   // If an OPC UA Node ID is different from DataPoint.id and needed for direct mapping,
   // it could be added here, or DataPoint.nodeId could be used if always referring to an OPC UA Node ID.
   // For now, assuming DataPoint.nodeId is the OPC UA Node ID used for opcUaNodeValues keys.
-  targetProperty: string;
-  valueMapping?: {
-    type?: 'exact' | 'range' | 'threshold' | 'boolean' | string;
-    mapping: Array<{
-      match?: any;
-      min?: number;
-      max?: number;
-      threshold?: number;
-      value: any;
-    }>;
-    defaultValue?: any;
-  };
-  format?: {
-    type: 'number' | 'boolean' | 'dateTime' | 'string';
-    precision?: number;
-    prefix?: string;
-    suffix?: string;
-    trueLabel?: string;
-    falseLabel?: string;
-    dateTimeFormat?: string;
-  };
+  // targetProperty: string; // Changed to targetProperties
+  targetProperties: TargetPropertyConfig[]; // New field
+}
+
+// --- ValueMapping and DataFormat (Extracted from DataPointLink) ---
+export interface ValueMapping {
+  type?: 'exact' | 'range' | 'threshold' | 'boolean' | string;
+  mapping: Array<{
+    match?: any;
+    min?: number;
+    max?: number;
+    threshold?: number;
+    value: any;
+  }>;
+  defaultValue?: any;
+}
+
+export interface DataFormat {
+  type: 'number' | 'boolean' | 'dateTime' | 'string';
+  precision?: number;
+  prefix?: string;
+  suffix?: string;
+  trueLabel?: string;
+  falseLabel?: string;
+  dateTimeFormat?: string;
+}
+
+// --- TargetPropertyConfig (New type) ---
+export interface TargetPropertyConfig {
+  id: string; // A unique ID for this target property configuration, e.g., a UUID
+  property: string; // The actual target property name, e.g., 'fillColor', 'visible'
+  valueMapping?: ValueMapping; // Optional: Reusing existing ValueMapping type
+  format?: DataFormat; // Optional: Reusing existing DataFormat type
 }
 
 // --- Base Node Data (Common to all custom nodes) ---

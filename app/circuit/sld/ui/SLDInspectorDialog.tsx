@@ -1,6 +1,7 @@
 // components/sld/ui/SLDInspectorDialog.tsx
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Node, Edge, isEdge as isReactFlowEdge } from 'reactflow';
+import { v4 as uuidv4 } from 'uuid';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,6 +35,7 @@ import {
     GeneratorNodeData, PLCNodeData, SensorNodeData, GenericDeviceNodeData, IsolatorNodeData,
     ATSNodeData, JunctionBoxNodeData, FuseNodeData,
     BaseNodeData, // Import BaseNodeData for common properties
+    TargetPropertyConfig, ValueMapping, DataFormat, // Added these for the new structure
     // Individual node data types already imported
 } from '@/types/sld';
 import { useAppStore } from '@/stores/appStore';
@@ -163,7 +165,35 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
 
 
             setFormData(initialFormData);
-            setDataLinks(elementDataCopy.dataPointLinks ?? []);
+
+            // Migrate dataPointLinks to new structure
+            const migratedDataLinks = (elementDataCopy.dataPointLinks ?? []).map((link: any) => {
+                if (link.targetProperty && !link.targetProperties) { // Old format
+                    const newLink = {
+                        ...link,
+                        targetProperties: [{
+                            id: uuidv4(), // Generate a unique ID
+                            property: link.targetProperty,
+                            valueMapping: link.valueMapping,
+                            format: link.format
+                        }],
+                    };
+                    delete newLink.targetProperty;
+                    delete newLink.valueMapping;
+                    delete newLink.format;
+                    return newLink;
+                } else if (!link.targetProperties) { // New link or old link without targetProperties array
+                     // Ensure targetProperties always exists, even if empty.
+                    return { ...link, targetProperties: (link.targetProperties || []) };
+                }
+                 // Ensure each targetProperty has an ID
+                const targetPropertiesWithIds = (link.targetProperties || []).map((tp: any) => ({
+                    ...tp,
+                    id: tp.id || uuidv4(), // Add id if missing
+                }));
+                return { ...link, targetProperties: targetPropertiesWithIds };
+            });
+            setDataLinks(migratedDataLinks);
             setActiveTab("properties");
         } else if (!isOpen) {
             setFormData({});
@@ -174,8 +204,10 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
     const dataPointOptions = useMemo((): ComboboxOption[] =>
         Object.values(dataPoints).map(dp => ({
             value: dp.id,
-            label: `${dp.name || dp.id}${dp.description ? ` - ${dp.description}` : ''}`,
-            description: `ID: ${dp.id} | Type: ${dp.dataType} | Unit: ${dp.unit || 'N/A'}`
+            // New label: Name | ID: id_val | NodeID: nodeid_val
+            label: `${dp.name || 'Unnamed DP'} | ID: ${dp.id} | NodeID: ${dp.nodeId}`,
+            // New description: Original description | Type: type_val | Unit: unit_val
+            description: `${dp.description || 'No description'} | Type: ${dp.dataType} | Unit: ${dp.unit || 'N/A'}`
         })).sort((a, b) => a.label.localeCompare(b.label)),
         [dataPoints]);
 
@@ -225,100 +257,210 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
         });
     }, []);
     
-    const handleDataLinkChange = useCallback((index: number, field: keyof DataPointLink, value: any) => {
+    // Renamed from handleDataLinkChange, now only for dataPointId
+    const handleDataPointIdChange = useCallback((linkIndex: number, dataPointId: string) => {
         setDataLinks(prevLinks => {
-            const newLinks = prevLinks.map((link, i) => {
-                if (i === index) {
-                    const updatedLink = { ...link, [field]: value };
-                    if (field === 'dataPointId') {
-                        const selectedDp = dataPoints[value as string];
-                        if (selectedDp) {
-                            let inferredType: NonNullable<DataPointLink['format']>['type'] = 'string';
-                            if (['Float', 'Double', 'Int16', 'Int32', 'UInt16', 'UInt32', 'Byte', 'SByte', 'Int64', 'UInt64'].includes(selectedDp.dataType)) inferredType = 'number';
-                            else if (selectedDp.dataType === 'Boolean') inferredType = 'boolean';
-                            else if (selectedDp.dataType === 'DateTime') inferredType = 'dateTime';
-                            
-                            updatedLink.format = { 
-                                ...(updatedLink.format || {}), 
-                                type: inferredType,
-                                suffix: selectedDp.unit || updatedLink.format?.suffix 
-                            };
-                            if (inferredType === 'boolean' && updatedLink.format) {
-                               delete updatedLink.format.suffix; 
-                               delete updatedLink.format.precision;
-                            }
-                        } else { 
-                            if (updatedLink.format) { 
-                                delete updatedLink.format.suffix;
-                                delete updatedLink.format.precision;
-                            }
-                        }
+            const newLinks = [...prevLinks];
+            const linkToUpdate = { ...newLinks[linkIndex], dataPointId: dataPointId };
+            
+            const selectedDp = dataPoints[dataPointId];
+            if (selectedDp) {
+                let inferredType: NonNullable<DataFormat>['type'] = 'string';
+                if (['Float', 'Double', 'Int16', 'Int32', 'UInt16', 'UInt32', 'Byte', 'SByte', 'Int64', 'UInt64'].includes(selectedDp.dataType)) inferredType = 'number';
+                else if (selectedDp.dataType === 'Boolean') inferredType = 'boolean';
+                else if (selectedDp.dataType === 'DateTime') inferredType = 'dateTime';
+
+                // If there's a first target property, update its format type and suffix based on the new DP
+                if (linkToUpdate.targetProperties && linkToUpdate.targetProperties.length > 0) {
+                    const firstTargetProperty = { ...linkToUpdate.targetProperties[0] };
+                    firstTargetProperty.format = {
+                        ...(firstTargetProperty.format || {}), // Ensure format object exists
+                        type: inferredType,
+                        suffix: selectedDp.unit || firstTargetProperty.format?.suffix // Preserve existing suffix if no unit
+                    };
+                    if (inferredType === 'boolean' && firstTargetProperty.format) {
+                        delete firstTargetProperty.format.suffix;
+                        delete firstTargetProperty.format.precision;
+                    } else if (inferredType === 'number' && !firstTargetProperty.format.precision) {
+                        // Optionally set a default precision for numbers if not already set
+                        // firstTargetProperty.format.precision = 2; 
                     }
-                    return updatedLink;
+                    linkToUpdate.targetProperties[0] = firstTargetProperty;
                 }
-                return link;
-            });
+            } else {
+                 // If DP is deselected, clear suffix/precision from the first target property's format
+                 if (linkToUpdate.targetProperties && linkToUpdate.targetProperties.length > 0) {
+                    const firstTargetProperty = { ...linkToUpdate.targetProperties[0] };
+                    if (firstTargetProperty.format) {
+                        delete firstTargetProperty.format.suffix; // Or set to ''
+                        delete firstTargetProperty.format.precision; // Or set to undefined
+                    }
+                     linkToUpdate.targetProperties[0] = firstTargetProperty;
+                 }
+            }
+            newLinks[linkIndex] = linkToUpdate;
             return newLinks;
         });
     }, [dataPoints]);
 
-    const addDataLink = useCallback(() => setDataLinks(prev => [...prev, { dataPointId: '', targetProperty: '' }]), []);
+    const addDataLink = useCallback(() => {
+        setDataLinks(prev => [...prev, { 
+            dataPointId: '', 
+            targetProperties: [{ id: uuidv4(), property: '', valueMapping: undefined, format: undefined }] 
+        }]);
+    }, []);
+
     const removeDataLink = useCallback((index: number) => setDataLinks(prev => prev.filter((_, i) => i !== index)), []);
+
+    const addTargetProperty = useCallback((linkIndex: number) => {
+        setDataLinks(prevLinks => {
+            const newLinks = [...prevLinks];
+            const linkToUpdate = { ...newLinks[linkIndex] };
+            linkToUpdate.targetProperties = [
+                ...(linkToUpdate.targetProperties || []),
+                { id: uuidv4(), property: '', valueMapping: undefined, format: undefined }
+            ];
+            newLinks[linkIndex] = linkToUpdate;
+            return newLinks;
+        });
+    }, []);
+
+    const removeTargetProperty = useCallback((linkIndex: number, targetPropertyId: string) => {
+        setDataLinks(prevLinks => {
+            const newLinks = [...prevLinks];
+            const linkToUpdate = { ...newLinks[linkIndex] };
+            linkToUpdate.targetProperties = (linkToUpdate.targetProperties || []).filter(tp => tp.id !== targetPropertyId);
+            newLinks[linkIndex] = linkToUpdate;
+            return newLinks;
+        });
+    }, []);
     
-    const handleMappingTypeChange = useCallback((linkIndex: number, selectedValue: string) => {
+    const handleTargetPropertyConfigChange = useCallback((linkIndex: number, targetPropertyId: string, field: keyof TargetPropertyConfig, value: any) => {
+        setDataLinks(prevLinks => {
+            const newLinks = [...prevLinks];
+            const linkToUpdate = { ...newLinks[linkIndex] };
+            linkToUpdate.targetProperties = (linkToUpdate.targetProperties || []).map(tp => {
+                if (tp.id === targetPropertyId) {
+                    return { ...tp, [field]: value };
+                }
+                return tp;
+            });
+            newLinks[linkIndex] = linkToUpdate;
+            return newLinks;
+        });
+    }, []);
+
+    const handleMappingTypeChange = useCallback((linkIndex: number, targetPropertyId: string, selectedValue: string) => {
         setDataLinks(prevLinks => prevLinks.map((link, i) => {
             if (i === linkIndex) {
-                if (selectedValue === '_none_') {
-                    return { ...link, valueMapping: undefined };
-                }
-                const newMappingType = selectedValue as NonNullable<DataPointLink['valueMapping']>['type'];
-                return { 
-                    ...link, 
-                    valueMapping: { 
-                        ...(link.valueMapping || {}), 
-                        type: newMappingType, 
-                        mapping: newMappingType === 'boolean' ? [{value: ''},{value: ''}] : [] 
-                    } 
-                };
+                const newTargetProperties = (link.targetProperties || []).map(tp => {
+                    if (tp.id === targetPropertyId) {
+                        if (selectedValue === '_none_') {
+                            return { ...tp, valueMapping: undefined };
+                        }
+                        const newMappingType = selectedValue as NonNullable<ValueMapping>['type'];
+                        return {
+                            ...tp,
+                            valueMapping: {
+                                ...(tp.valueMapping || { mapping: [] }), // ensure mapping array exists
+                                type: newMappingType,
+                                mapping: newMappingType === 'boolean' ? [{ value: '' }, { value: '' }] : (tp.valueMapping?.mapping && tp.valueMapping.type === newMappingType ? tp.valueMapping.mapping : []) // Preserve existing mapping if type is same, else default
+                            }
+                        };
+                    }
+                    return tp;
+                });
+                return { ...link, targetProperties: newTargetProperties };
             }
             return link;
         }));
     }, []);
 
-    const handleMappingEntryChange = useCallback((linkIndex: number, mapIndex: number, field: string, value: any) => {
+    const handleMappingEntryChange = useCallback((linkIndex: number, targetPropertyId: string, mapIndex: number, field: string, value: any) => {
         setDataLinks(prevLinks => prevLinks.map((link, i) => {
-            if (i === linkIndex && link.valueMapping) {
-                const newMappingEntries = [...link.valueMapping.mapping];
-                newMappingEntries[mapIndex] = { ...newMappingEntries[mapIndex], [field]: value };
-                return { ...link, valueMapping: { ...link.valueMapping, mapping: newMappingEntries }};
+            if (i === linkIndex) {
+                const newTargetProperties = (link.targetProperties || []).map(tp => {
+                    if (tp.id === targetPropertyId && tp.valueMapping) {
+                        const newMappingEntries = [...tp.valueMapping.mapping];
+                        newMappingEntries[mapIndex] = { ...newMappingEntries[mapIndex], [field]: value };
+                        return { ...tp, valueMapping: { ...tp.valueMapping, mapping: newMappingEntries } };
+                    }
+                    return tp;
+                });
+                return { ...link, targetProperties: newTargetProperties };
             }
             return link;
         }));
     }, []);
 
-    const addMappingEntry = useCallback((linkIndex: number) => {
-            setDataLinks(prevLinks => prevLinks.map((link, i) => {
-                if (i === linkIndex && link.valueMapping) {
-                    return { ...link, valueMapping: { ...link.valueMapping, mapping: [...link.valueMapping.mapping, { value: '' }] }};
-                }
-                return link;
-            }));
-        }, []);
-    
-    const removeMappingEntry = useCallback((linkIndex: number, mapIndex: number) => {
+    const addMappingEntry = useCallback((linkIndex: number, targetPropertyId: string) => {
         setDataLinks(prevLinks => prevLinks.map((link, i) => {
-            if (i === linkIndex && link.valueMapping) {
-                const newMappingEntries = link.valueMapping.mapping.filter((_, idx) => idx !== mapIndex);
-                return { ...link, valueMapping: { ...link.valueMapping, mapping: newMappingEntries }};
+            if (i === linkIndex) {
+                const newTargetProperties = (link.targetProperties || []).map(tp => {
+                    if (tp.id === targetPropertyId && tp.valueMapping) {
+                        // Ensure mapping array exists before spreading
+                        const currentMapping = tp.valueMapping.mapping || [];
+                        return { ...tp, valueMapping: { ...tp.valueMapping, mapping: [...currentMapping, { value: '' }] } };
+                    }
+                    return tp;
+                });
+                return { ...link, targetProperties: newTargetProperties };
+            }
+            return link;
+        }));
+    }, []);
+
+    const removeMappingEntry = useCallback((linkIndex: number, targetPropertyId: string, mapIndex: number) => {
+        setDataLinks(prevLinks => prevLinks.map((link, i) => {
+            if (i === linkIndex) {
+                const newTargetProperties = (link.targetProperties || []).map(tp => {
+                    if (tp.id === targetPropertyId && tp.valueMapping && tp.valueMapping.mapping) {
+                        const newMappingEntries = tp.valueMapping.mapping.filter((_, idx) => idx !== mapIndex);
+                        return { ...tp, valueMapping: { ...tp.valueMapping, mapping: newMappingEntries } };
+                    }
+                    return tp;
+                });
+                return { ...link, targetProperties: newTargetProperties };
             }
             return link;
         }));
     }, []);
     
-    const handleFormatChange = useCallback((linkIndex: number, field: keyof NonNullable<DataPointLink['format']>, value: any) => {
+    // Handles changes to the defaultValue field in valueMapping
+    const handleMappingDefaultValueChange = useCallback((linkIndex: number, targetPropertyId: string, value: any) => {
         setDataLinks(prevLinks => prevLinks.map((link, i) => {
             if (i === linkIndex) {
-                return { ...link, format: { ...(link.format || { type: 'string'}), [field]: value } };
+                const newTargetProperties = (link.targetProperties || []).map(tp => {
+                    if (tp.id === targetPropertyId) {
+                        return {
+                            ...tp,
+                            valueMapping: {
+                                ...(tp.valueMapping || { type: undefined, mapping: [] }), // Ensure valueMapping object exists
+                                defaultValue: value
+                            }
+                        };
+                    }
+                    return tp;
+                });
+                return { ...link, targetProperties: newTargetProperties };
+            }
+            return link;
+        }));
+    }, []);
+
+
+    const handleFormatChange = useCallback((linkIndex: number, targetPropertyId: string, field: keyof DataFormat, value: any) => {
+        setDataLinks(prevLinks => prevLinks.map((link, i) => {
+            if (i === linkIndex) {
+                const newTargetProperties = (link.targetProperties || []).map(tp => {
+                    if (tp.id === targetPropertyId) {
+                        // Ensure format object exists with a default type if it's null/undefined
+                        const baseFormat: Partial<DataFormat> = tp.format || { type: 'string' }; // Ensure type is string if format is new
+                        return { ...tp, format: { ...baseFormat, [field]: value } as DataFormat };
+                    }
+                    return tp;
+                });
+                return { ...link, targetProperties: newTargetProperties };
             }
             return link;
         }));
@@ -326,7 +468,11 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
 
     const handleSaveChangesAndClose = useCallback(() => {
         if (!selectedElement) return;
-        const validDataLinks = dataLinks.filter(link => link.dataPointId && link.targetProperty);
+        
+        const validDataLinks = dataLinks.map(link => ({
+            ...link, // Spreads dataPointId and potentially other future top-level link properties
+            targetProperties: (link.targetProperties || []).filter(tp => tp.property), // Keep only targetProperties with a 'property'
+        })).filter(link => link.dataPointId && (link.targetProperties || []).length > 0);
         
         let updatedElementData: CustomNodeData | CustomFlowEdgeData;
 
@@ -419,95 +565,140 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="space-y-1">
                         <Label htmlFor={`dp-select-${index}`} className="text-xs font-medium">Data Point <span className="text-red-500">*</span></Label>
-                        <SearchableSelect options={dataPointOptions} value={link.dataPointId || ''} onChange={(value) => handleDataLinkChange(index, 'dataPointId', value)} placeholder="Search & Select Data Point..." searchPlaceholder="Type to search..." notFoundText="No data points found." />
-                        {link.dataPointId && dataPoints[link.dataPointId] && <p className="text-xs text-muted-foreground pt-1">Type: {dataPoints[link.dataPointId].dataType}, Unit: {dataPoints[link.dataPointId].unit || "N/A"}</p>}
-                    </div>
-                    <div className="space-y-1">
-                        <Label htmlFor={`target-prop-${index}`} className="text-xs font-medium">Target Property <span className="text-red-500">*</span></Label>
-                        <SearchableSelect options={targetPropertiesOptions} value={link.targetProperty || ''} onChange={(value) => handleDataLinkChange(index, 'targetProperty', value)} placeholder="Select Property to Affect..." searchPlaceholder="Type to search..." notFoundText="No properties found." />
-                        {link.targetProperty && <p className="text-xs text-muted-foreground pt-1">{targetPropertiesOptions.find(o => o.value === link.targetProperty)?.description}</p>}
+                        <SearchableSelect options={dataPointOptions} value={link.dataPointId || ''} onChange={(value) => handleDataPointIdChange(index, value as string)} placeholder="Search & Select Data Point..." searchPlaceholder="Type to search..." notFoundText="No data points found." />
+                        {selectedDataPoint && <p className="text-xs text-muted-foreground pt-1">Type: {selectedDataPoint.dataType}, Unit: {selectedDataPoint.unit || "N/A"}</p>}
                     </div>
                 </div>
-                <Separator className="my-3" />
-                <div className="space-y-2">
-                    <Label className="text-xs font-medium flex justify-between items-center">
-                        Value Mapping (Optional)
-                        <TooltipProvider delayDuration={100}><Tooltip>
-                            <TooltipTrigger asChild><InfoIcon className="w-3.5 h-3.5 text-muted-foreground cursor-help" /></TooltipTrigger>
-                            <TooltipContent side="left" className="max-w-xs"><p>Transform data point values before they affect the target property. E.g., map 0/1 to "red"/"green", or numeric ranges to status strings.</p></TooltipContent>
-                        </Tooltip></TooltipProvider>
-                    </Label>
-                    <Select value={link.valueMapping?.type ?? '_none_'} onValueChange={(value) => handleMappingTypeChange(index, value)}>
-                        <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Select Mapping Type..." /></SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="_none_">No Mapping (Use Direct Value)</SelectItem>
-                            <SelectItem value="exact">Exact Match (String/Number)</SelectItem>
-                            <SelectItem value="range">Numeric Range</SelectItem>
-                            <SelectItem value="threshold">Numeric Threshold (Value &gt;= X)</SelectItem>
-                            <SelectItem value="boolean">Boolean (True/False to Values)</SelectItem>
-                        </SelectContent>
-                    </Select>
-                    {link.valueMapping && link.valueMapping.type && link.valueMapping.type !== '_none_' && (
-                        <div className="pl-2 mt-2 space-y-2 border-l-2 border-primary/20 ">
-                            {link.valueMapping.mapping?.map((mapEntry, mapIdx) => (
-                                <div key={mapIdx} className="flex gap-2 items-center text-xs p-2 bg-background rounded-md shadow-sm">
-                                    {link.valueMapping?.type === 'exact' && (<><Input placeholder="If Source Value Is..." value={mapEntry.match ?? ''} onChange={(e) => handleMappingEntryChange(index, mapIdx, 'match', e.target.value)} className="h-8 flex-1" /><span className='text-muted-foreground mx-1'>then set to</span><Input placeholder="Target Value" value={mapEntry.value ?? ''} onChange={(e) => handleMappingEntryChange(index, mapIdx, 'value', e.target.value)} className="h-8 flex-1" /></>)}
-                                    {link.valueMapping?.type === 'range' && (<><Input type="number" placeholder="Min" value={mapEntry.min ?? ''} onChange={(e) => handleMappingEntryChange(index, mapIdx, 'min', parseFloat(e.target.value))} className="h-8 w-20" /><span className='text-muted-foreground mx-1'>to</span><Input type="number" placeholder="Max" value={mapEntry.max ?? ''} onChange={(e) => handleMappingEntryChange(index, mapIdx, 'max', parseFloat(e.target.value))} className="h-8 w-20" /><span className='text-muted-foreground mx-1'>then set to</span><Input placeholder="Target Value" value={mapEntry.value ?? ''} onChange={(e) => handleMappingEntryChange(index, mapIdx, 'value', e.target.value)} className="h-8 flex-1" /></>)}
-                                    {link.valueMapping?.type === 'threshold' && (<><Input type="number" placeholder="If Source >= " value={mapEntry.threshold ?? ''} onChange={(e) => handleMappingEntryChange(index, mapIdx, 'threshold', parseFloat(e.target.value))} className="h-8 w-28" /><span className='text-muted-foreground mx-1'>then set to</span><Input placeholder="Target Value" value={mapEntry.value ?? ''} onChange={(e) => handleMappingEntryChange(index, mapIdx, 'value', e.target.value)} className="h-8 flex-1" /></>)}
-                                    {link.valueMapping?.type === 'boolean' && mapIdx === 0 && (<><Label className="w-24 text-right pr-2">If True, set to:</Label><Input placeholder="Target Value for True" value={mapEntry.value ?? ''} onChange={(e) => handleMappingEntryChange(index, mapIdx, 'value', e.target.value)} className="h-8 flex-1" /></>)}
-                                    {link.valueMapping?.type === 'boolean' && mapIdx === 1 && (<><Label className="w-24 text-right pr-2">If False, set to:</Label><Input placeholder="Target Value for False" value={mapEntry.value ?? ''} onChange={(e) => handleMappingEntryChange(index, mapIdx, 'value', e.target.value)} className="h-8 flex-1" /></>)}
-                                    {link.valueMapping?.type !== 'boolean' && (<TooltipProvider delayDuration={100}><Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" className="h-7 w-7 flex-shrink-0" onClick={() => removeMappingEntry(index, mapIdx)}><MinusCircle className="h-4 w-4 text-destructive" /></Button></TooltipTrigger><TooltipContent><p>Remove This Mapping Rule</p></TooltipContent></Tooltip></TooltipProvider>)}
-                                </div>
-                            ))}
-                            {link.valueMapping?.type && !['_none_', 'boolean'].includes(link.valueMapping.type) && (<Button size="sm" variant="outline" onClick={() => addMappingEntry(index)} className="text-xs h-8 mt-1"><PlusCircle className="h-3.5 w-3.5 mr-1.5" /> Add Rule</Button>)}
-                            <div className="mt-2">
-                                <Label htmlFor={`map-default-${index}`} className="text-xs">Default Value (if no rule matches or on error)</Label>
-                                <Input id={`map-default-${index}`} placeholder="e.g., 'gray' or {passthrough_value}" value={link.valueMapping?.defaultValue ?? ''} onChange={(e) => handleDataLinkChange(index, 'valueMapping', { ...link.valueMapping, defaultValue: e.target.value })} className="h-8 text-xs" />
-                                <p className="text-xs text-muted-foreground pt-0.5">Use <code className='text-xs p-0.5 bg-muted rounded-sm'>{'{passthrough_value}'}</code> to use the original data point value.</p>
-                            </div>
+
+                { !link.dataPointId && (link.targetProperties || []).length > 0 &&
+                    <p className="text-xs text-muted-foreground mb-2 px-1 pt-1">Select a Data Point above to see its details and to enable formatting options for target properties.</p>
+                }
+
+                {/* Render multiple TargetPropertyConfig sections */}
+                {(link.targetProperties || []).map((tpConfig, tpIndex) => {
+                    const targetPropertyInfo = targetPropertiesOptions.find(o => o.value === tpConfig.property);
+                    const targetPropertyLabel = tpConfig.property && targetPropertyInfo
+                        ? `Target: ${targetPropertyInfo.label}`
+                        : `Target Property Config #${tpIndex + 1} (Not configured)`;
+                    return (
+                    <div key={tpConfig.id} className="p-3 mt-2 border rounded-md border-border/40 bg-muted/20 shadow-sm">
+                        <div className="flex justify-between items-center mb-2">
+                            <Label className="text-xs font-semibold text-primary/80">{targetPropertyLabel}</Label>
+                            <TooltipProvider delayDuration={100}>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeTargetProperty(index, tpConfig.id)}>
+                                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent><p>Remove this Target Property Config</p></TooltipContent>
+                                </Tooltip>
+                            </TooltipProvider>
                         </div>
-                    )}
-                </div>
-                <Separator className="my-3" />
-                <div className="space-y-2">
-                    <Label className="text-xs font-medium flex justify-between items-center">
-                        Display Formatting (Optional)
-                         <TooltipProvider delayDuration={100}><Tooltip>
-                            <TooltipTrigger asChild><InfoIcon className="w-3.5 h-3.5 text-muted-foreground cursor-help" /></TooltipTrigger>
-                            <TooltipContent side="left" className="max-w-xs"><p>Control how the data point's value is displayed IF the Target Property expects text (e.g., Label, Data Value). Applied AFTER mapping.</p></TooltipContent>
-                        </Tooltip></TooltipProvider>
-                    </Label>
-                    {(!link.dataPointId || !dataPoints[link.dataPointId]) && <p className="text-xs text-muted-foreground italic p-2 bg-muted/30 rounded-md">Select a Data Point above to enable formatting options based on its type.</p>}
-                    {link.dataPointId && dataPoints[link.dataPointId] && (
-                        <div className="pl-2 space-y-2 text-xs border-l-2 border-accent/30">
-                            {(['Int16','Int32','UInt16','UInt32','Float','Double','Byte','SByte','Int64','UInt64'].includes(dataPoints[link.dataPointId].dataType)) && (
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                    <FieldInput id={`format-prefix-${index}`} label="Prefix" value={link.format?.prefix ?? ''} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, 'prefix', e.target.value)} placeholder="e.g. $" />
-                                    <FieldInput id={`format-suffix-${index}`} label="Suffix (Unit)" value={link.format?.suffix ?? dataPoints[link.dataPointId].unit ?? ''} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, 'suffix', e.target.value)} placeholder="e.g. kW" />
-                                    <FieldInput type="number" id={`format-precision-${index}`} label="Decimal Places" value={link.format?.precision ?? ''} onChange={(e: { target: { value: string; }; }) => handleFormatChange(index, 'precision', e.target.value === '' ? undefined : parseInt(e.target.value))} min="0" step="1" placeholder="e.g. 2" />
-                                </div>
-                            )}
-                            {dataPoints[link.dataPointId].dataType === 'Boolean' && (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                    <FieldInput id={`format-true-${index}`} label="If True, Display:" value={link.format?.trueLabel ?? 'True'} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, 'trueLabel', e.target.value)} placeholder="e.g. ON, Active" />
-                                    <FieldInput id={`format-false-${index}`} label="If False, Display:" value={link.format?.falseLabel ?? 'False'} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, 'falseLabel', e.target.value)} placeholder="e.g. OFF, Inactive" />
-                                </div>
-                            )}
-                            {dataPoints[link.dataPointId].dataType === 'DateTime' && (
-                                <FieldInput id={`format-datetime-${index}`} label="Date/Time Pattern" value={link.format?.dateTimeFormat ?? 'YYYY-MM-DD HH:mm:ss'} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, 'dateTimeFormat', e.target.value)} placeholder="moment.js / date-fns format" />
-                            )}
-                            {dataPoints[link.dataPointId].dataType === 'String' && (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                    <FieldInput id={`format-prefix-${index}`} label="Prefix" value={link.format?.prefix ?? ''} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, 'prefix', e.target.value)} />
-                                    <FieldInput id={`format-suffix-${index}`} label="Suffix" value={link.format?.suffix ?? ''} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, 'suffix', e.target.value)} />
-                                </div>)
-                            }
+                        <div className="space-y-1 mb-3">
+                            <Label htmlFor={`target-prop-val-${index}-${tpConfig.id}`} className="text-xs font-medium">Target Property <span className="text-red-500">*</span></Label>
+                            <SearchableSelect 
+                                options={targetPropertiesOptions} 
+                                value={tpConfig.property || ''} 
+                                onChange={(value) => handleTargetPropertyConfigChange(index, tpConfig.id, 'property', value)} 
+                                placeholder="Select Property to Affect..." 
+                                searchPlaceholder="Type to search..." 
+                                notFoundText="No properties found." 
+                            />
+                            {tpConfig.property && targetPropertyInfo && <p className="text-xs text-muted-foreground pt-1">{targetPropertyInfo.description}</p>}
                         </div>
-                    )}
-                </div>
+                
+                        <Separator className="my-3" />
+                        <div className="space-y-2">
+                            <Label className="text-xs font-medium flex justify-between items-center">
+                                Value Mapping (Optional)
+                                <TooltipProvider delayDuration={100}><Tooltip>
+                                    <TooltipTrigger asChild><InfoIcon className="w-3.5 h-3.5 text-muted-foreground cursor-help" /></TooltipTrigger>
+                                    <TooltipContent side="left" className="max-w-xs"><p>Transform data point values before they affect the target property. E.g., map 0/1 to "red"/"green", or numeric ranges to status strings.</p></TooltipContent>
+                                </Tooltip></TooltipProvider>
+                            </Label>
+                            <Select value={tpConfig.valueMapping?.type ?? '_none_'} onValueChange={(value) => handleMappingTypeChange(index, tpConfig.id, value)}>
+                                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Select Mapping Type..." /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="_none_">No Mapping (Use Direct Value)</SelectItem>
+                                    <SelectItem value="exact">Exact Match (String/Number)</SelectItem>
+                                    <SelectItem value="range">Numeric Range</SelectItem>
+                                    <SelectItem value="threshold">Numeric Threshold (Value &gt;= X)</SelectItem>
+                                    <SelectItem value="boolean">Boolean (True/False to Values)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            {tpConfig.valueMapping && tpConfig.valueMapping.type && tpConfig.valueMapping.type !== '_none_' && (
+                                <div className="pl-2 mt-2 space-y-2 border-l-2 border-primary/20 ">
+                                    {(tpConfig.valueMapping.mapping || []).map((mapEntry, mapIdx) => (
+                                        <div key={mapIdx} className="flex gap-2 items-center text-xs p-2 bg-background rounded-md shadow-sm">
+                                            {tpConfig.valueMapping?.type === 'exact' && (<><Input placeholder="If Source Value Is..." value={mapEntry.match ?? ''} onChange={(e) => handleMappingEntryChange(index, tpConfig.id, mapIdx, 'match', e.target.value)} className="h-8 flex-1" /><span className='text-muted-foreground mx-1'>then set to</span><Input placeholder="Target Value" value={mapEntry.value ?? ''} onChange={(e) => handleMappingEntryChange(index, tpConfig.id, mapIdx, 'value', e.target.value)} className="h-8 flex-1" /></>)}
+                                            {tpConfig.valueMapping?.type === 'range' && (<><Input type="number" placeholder="Min" value={mapEntry.min ?? ''} onChange={(e) => handleMappingEntryChange(index, tpConfig.id, mapIdx, 'min', parseFloat(e.target.value))} className="h-8 w-20" /><span className='text-muted-foreground mx-1'>to</span><Input type="number" placeholder="Max" value={mapEntry.max ?? ''} onChange={(e) => handleMappingEntryChange(index, tpConfig.id, mapIdx, 'max', parseFloat(e.target.value))} className="h-8 w-20" /><span className='text-muted-foreground mx-1'>then set to</span><Input placeholder="Target Value" value={mapEntry.value ?? ''} onChange={(e) => handleMappingEntryChange(index, tpConfig.id, mapIdx, 'value', e.target.value)} className="h-8 flex-1" /></>)}
+                                            {tpConfig.valueMapping?.type === 'threshold' && (<><Input type="number" placeholder="If Source >= " value={mapEntry.threshold ?? ''} onChange={(e) => handleMappingEntryChange(index, tpConfig.id, mapIdx, 'threshold', parseFloat(e.target.value))} className="h-8 w-28" /><span className='text-muted-foreground mx-1'>then set to</span><Input placeholder="Target Value" value={mapEntry.value ?? ''} onChange={(e) => handleMappingEntryChange(index, tpConfig.id, mapIdx, 'value', e.target.value)} className="h-8 flex-1" /></>)}
+                                            {tpConfig.valueMapping?.type === 'boolean' && mapIdx === 0 && (<><Label className="w-24 text-right pr-2">If True, set to:</Label><Input placeholder="Target Value for True" value={mapEntry.value ?? ''} onChange={(e) => handleMappingEntryChange(index, tpConfig.id, mapIdx, 'value', e.target.value)} className="h-8 flex-1" /></>)}
+                                            {tpConfig.valueMapping?.type === 'boolean' && mapIdx === 1 && (<><Label className="w-24 text-right pr-2">If False, set to:</Label><Input placeholder="Target Value for False" value={mapEntry.value ?? ''} onChange={(e) => handleMappingEntryChange(index, tpConfig.id, mapIdx, 'value', e.target.value)} className="h-8 flex-1" /></>)}
+                                            {tpConfig.valueMapping?.type !== 'boolean' && (<TooltipProvider delayDuration={100}><Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" className="h-7 w-7 flex-shrink-0" onClick={() => removeMappingEntry(index, tpConfig.id, mapIdx)}><MinusCircle className="h-4 w-4 text-destructive" /></Button></TooltipTrigger><TooltipContent><p>Remove This Mapping Rule</p></TooltipContent></Tooltip></TooltipProvider>)}
+                                        </div>
+                                    ))}
+                                    {tpConfig.valueMapping?.type && !['_none_', 'boolean'].includes(tpConfig.valueMapping.type) && (<Button size="sm" variant="outline" onClick={() => addMappingEntry(index, tpConfig.id)} className="text-xs h-8 mt-1"><PlusCircle className="h-3.5 w-3.5 mr-1.5" /> Add Rule</Button>)}
+                                    <div className="mt-2">
+                                        <Label htmlFor={`map-default-${index}-${tpConfig.id}`} className="text-xs">Default Value (if no rule matches or on error)</Label>
+                                        <Input id={`map-default-${index}-${tpConfig.id}`} placeholder="e.g., 'gray' or {passthrough_value}" value={tpConfig.valueMapping?.defaultValue ?? ''} onChange={(e) => handleMappingDefaultValueChange(index, tpConfig.id, e.target.value)} className="h-8 text-xs" />
+                                        <p className="text-xs text-muted-foreground pt-0.5">Use <code className='text-xs p-0.5 bg-muted rounded-sm'>{'{passthrough_value}'}</code> to use the original data point value.</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        <Separator className="my-3" />
+                        <div className="space-y-2">
+                            <Label className="text-xs font-medium flex justify-between items-center">
+                                Display Formatting (Optional)
+                                 <TooltipProvider delayDuration={100}><Tooltip>
+                                    <TooltipTrigger asChild><InfoIcon className="w-3.5 h-3.5 text-muted-foreground cursor-help" /></TooltipTrigger>
+                                    <TooltipContent side="left" className="max-w-xs"><p>Control how the data point's value is displayed IF the Target Property expects text (e.g., Label, Data Value). Applied AFTER mapping.</p></TooltipContent>
+                                </Tooltip></TooltipProvider>
+                            </Label>
+                            {(!link.dataPointId || !dataPoints[link.dataPointId]) && <p className="text-xs text-muted-foreground italic p-2 bg-muted/30 rounded-md">Select a Data Point above to enable formatting options based on its type.</p>}
+                            {link.dataPointId && dataPoints[link.dataPointId] && (
+                                <div className="pl-2 space-y-2 text-xs border-l-2 border-accent/30">
+                                    {(['Int16','Int32','UInt16','UInt32','Float','Double','Byte','SByte','Int64','UInt64'].includes(dataPoints[link.dataPointId].dataType)) && (
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                            <FieldInput id={`format-prefix-${index}-${tpConfig.id}`} label="Prefix" value={tpConfig.format?.prefix ?? ''} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, tpConfig.id, 'prefix', e.target.value)} placeholder="e.g. $" />
+                                            <FieldInput id={`format-suffix-${index}-${tpConfig.id}`} label="Suffix (Unit)" value={tpConfig.format?.suffix ?? dataPoints[link.dataPointId].unit ?? ''} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, tpConfig.id, 'suffix', e.target.value)} placeholder="e.g. kW" />
+                                            <FieldInput type="number" id={`format-precision-${index}-${tpConfig.id}`} label="Decimal Places" value={tpConfig.format?.precision ?? ''} onChange={(e: { target: { value: string; }; }) => handleFormatChange(index, tpConfig.id, 'precision', e.target.value === '' ? undefined : parseInt(e.target.value))} min="0" step="1" placeholder="e.g. 2" />
+                                        </div>
+                                    )}
+                                    {dataPoints[link.dataPointId].dataType === 'Boolean' && (
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                            <FieldInput id={`format-true-${index}-${tpConfig.id}`} label="If True, Display:" value={tpConfig.format?.trueLabel ?? 'True'} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, tpConfig.id, 'trueLabel', e.target.value)} placeholder="e.g. ON, Active" />
+                                            <FieldInput id={`format-false-${index}-${tpConfig.id}`} label="If False, Display:" value={tpConfig.format?.falseLabel ?? 'False'} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, tpConfig.id, 'falseLabel', e.target.value)} placeholder="e.g. OFF, Inactive" />
+                                        </div>
+                                    )}
+                                    {dataPoints[link.dataPointId].dataType === 'DateTime' && (
+                                        <FieldInput id={`format-datetime-${index}-${tpConfig.id}`} label="Date/Time Pattern" value={tpConfig.format?.dateTimeFormat ?? 'YYYY-MM-DD HH:mm:ss'} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, tpConfig.id, 'dateTimeFormat', e.target.value)} placeholder="moment.js / date-fns format" />
+                                    )}
+                                    {dataPoints[link.dataPointId].dataType === 'String' && (
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                            <FieldInput id={`format-prefix-${index}-${tpConfig.id}`} label="Prefix" value={tpConfig.format?.prefix ?? ''} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, tpConfig.id, 'prefix', e.target.value)} />
+                                            <FieldInput id={`format-suffix-${index}-${tpConfig.id}`} label="Suffix" value={tpConfig.format?.suffix ?? ''} onChange={(e: { target: { value: any; }; }) => handleFormatChange(index, tpConfig.id, 'suffix', e.target.value)} />
+                                        </div>)
+                                    }
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    )})}
+                { (link.targetProperties || []).length === 0 &&
+                    <div className="text-center py-3">
+                        <p className="text-xs text-muted-foreground">This Data Link has no target properties configured. Click below to add one.</p>
+                    </div>
+                }
+                <Button variant="outline" size="xs" onClick={() => addTargetProperty(index)} className="mt-3 w-full text-xs h-8"> {/* Increased height to h-8 for better clickability */}
+                    <PlusCircle className="h-3.5 w-3.5 mr-1.5" /> Add Target Property Config
+                </Button>
+                { (link.targetProperties || []).length > 0 && <Separator className="my-3" /> /* Only show separator if there were TPs */ }
             </CardContent>
         </Card>
-    );
+    )};
     
     const FieldInput = ({ id, label, value, onChange, type = "text", placeholder, name: fieldName, ...props }: any) => (
         <div className="space-y-0.5">
@@ -548,9 +739,16 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
                             <TabsTrigger value="properties" className="text-sm data-[state=active]:border-primary data-[state=active]:border-b-2 data-[state=active]:text-primary rounded-none h-full">
                                 <Settings2 className="w-4 h-4 mr-2" />Properties
                             </TabsTrigger>
-                            <TabsTrigger value="data_linking" className="text-sm data-[state=active]:border-primary data-[state=active]:border-b-2 data-[state=active]:text-primary rounded-none h-full">
-                                <Link2 className="w-4 h-4 mr-2" />Data Linking
-                            </TabsTrigger>
+                            <TooltipProvider delayDuration={100}>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <TabsTrigger value="data_linking" className="text-sm data-[state=active]:border-primary data-[state=active]:border-b-2 data-[state=active]:text-primary rounded-none h-full w-full">
+                                            <Link2 className="w-4 h-4 mr-2" />Data Linking
+                                        </TabsTrigger>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom"><p>Configure how this element interacts with real-time data.</p></TooltipContent>
+                                </Tooltip>
+                            </TooltipProvider>
                         </TabsList>
 
                         <div className="p-4 md:p-6"> {/* Padding for content inside scroll area */}

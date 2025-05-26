@@ -42,7 +42,7 @@ export interface ThreePhaseGroupInfo {
         b?: DataPoint;
         c?: DataPoint;
     };
-    average?: DataPoint;
+    average?: Partial<DataPoint>; // Changed from DataPoint to Partial<DataPoint>
     unit?: string;
     total?: DataPoint;
     category?: 'energy' | 'grid' | 'control' | 'battery' | 'inverter' | 'pv';
