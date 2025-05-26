@@ -7,8 +7,13 @@ import { useAppStore } from '@/stores/appStore';
 import { getDataPointValue, applyValueMapping, formatDisplayValue, getDerivedStyle } from './nodeUtils';
 import { ZapIcon, CheckCircleIcon, AlertTriangleIcon, XCircleIcon, CogIcon, PowerIcon, PlayIcon } from 'lucide-react'; // Added PlayIcon
 
-const GeneratorNode: React.FC<NodeProps<GeneratorNodeData>> = ({ data, selected, isConnectable }) => {
-  const { isEditMode, currentUser, realtimeData, dataPoints } = useAppStore(state => ({
+const GeneratorNode: React.FC<NodeProps<GeneratorNodeData>> = (props) => {
+  const { data, selected, isConnectable, id, type, zIndex, dragging } = props; // Destructure all needed props
+  // These properties may not be in the ReactFlow NodeProps type but we need them for CustomNodeType
+  const width = 85; // Default width based on the w-[85px] class
+  const height = 90; // Default height based on the h-[90px] class
+  const position = props.xPos && props.yPos ? { x: props.xPos, y: props.yPos } : { x: 0, y: 0 };
+  const { isEditMode, currentUser, opcUaNodeValues, dataPoints, setSelectedElementForDetails } = useAppStore(state => ({ // Changed realtimeData to opcUaNodeValues
     isEditMode: state.isEditMode,
     currentUser: state.currentUser,
     realtimeData: state.realtimeData,

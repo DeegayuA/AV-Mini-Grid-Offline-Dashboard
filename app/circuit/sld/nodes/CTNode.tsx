@@ -15,8 +15,9 @@ interface CTNodeData extends BaseNodeData { // Keep this interface if CT specifi
     }
 }
 
-const CTNode: React.FC<NodeProps<CTNodeData>> = ({ data, selected, isConnectable }) => {
-  const { isEditMode, currentUser, realtimeData, dataPoints } = useAppStore(state => ({
+const CTNode: React.FC<NodeProps<CTNodeData>> = (props) => {
+  const { data, selected, isConnectable, id, type, zIndex, dragging } = props; // Destructure all needed props
+  const { isEditMode, currentUser, setSelectedElementForDetails } = useAppStore(state => ({
     isEditMode: state.isEditMode,
     currentUser: state.currentUser,
     realtimeData: state.realtimeData,
@@ -94,6 +95,26 @@ const CTNode: React.FC<NodeProps<CTNodeData>> = ({ data, selected, isConnectable
       whileHover="hover" initial="initial"
       transition={{ type: 'spring', stiffness: 300, damping: 10 }}
     >
+      {!isEditMode && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute top-0.5 right-0.5 h-5 w-5 rounded-full z-20 bg-background/60 hover:bg-secondary/80 p-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            const fullNodeObject: CustomNodeType = {
+                id, type, position, data, selected, dragging, zIndex, width, height,
+            };
+            setSelectedElementForDetails(fullNodeObject);
+          }}
+          title="View Details"
+        >
+          <InfoIcon className="h-3 w-3 text-primary/80" />
+        </Button>
+      )}
+
+      {/* CT is typically in-line with a main conductor, with a signal output */}
+      {/* Primary current flows through, usually top-to-bottom */}
       <Handle type="target" position={Position.Top} id="primary_in" isConnectable={isConnectable} className="!w-3 !h-3 !-mt-0.5 sld-handle-style" title="Primary In"/>
       <Handle type="source" position={Position.Bottom} id="primary_out" isConnectable={isConnectable} className="!w-3 !h-3 !-mb-0.5 sld-handle-style" title="Primary Out"/>
       <Handle type="source" position={Position.Right} id="secondary_signal_out" isConnectable={isConnectable} className="!w-2.5 !h-2.5 sld-handle-style !bg-purple-400 !border-purple-500" title="Secondary Signal"/>

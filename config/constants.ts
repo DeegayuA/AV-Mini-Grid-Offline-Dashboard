@@ -39,7 +39,7 @@ export const APP_PRIVACY_POLICY = "https://yourwebsite.com/privacy-policy";
 export const APP_TERMS_OF_SERVICE = "https://yourwebsite.com/terms-of-service";
 
 // Ensure this is defined and exported
-export const AVAILABLE_SLD_LAYOUT_IDS: string[] = ['main_plant', 'secondary_plant', 'empty_template', 'new_project_canvas'];
+export const AVAILABLE_SLD_LAYOUT_IDS: string[] = ['main_plant', 'secondary_plant', 'empty_template', 'new_project_canvas','ranna_sld'];
 
 export const USER = "viewer";
 // export const USER = "admin";

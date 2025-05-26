@@ -1,17 +1,22 @@
 // components/sld/nodes/FuseNode.tsx
 import React, { memo, useMemo } from 'react';
-import { NodeProps, Handle, Position } from 'reactflow';
+import { NodeProps, Handle, Position, XYPosition } from 'reactflow';
 import { motion } from 'framer-motion';
+<<<<<<< Updated upstream
 import { BaseNodeData, DataPointLink, DataPoint } from '@/types/sld';
+=======
+import { BaseNodeData, CustomNodeType, DataPointLink, DataPoint, FuseNodeData as ImportedFuseNodeData, SLDElementType } from '@/types/sld'; // Added CustomNodeType
+>>>>>>> Stashed changes
 import { useAppStore } from '@/stores/appStore';
 import { getDataPointValue, applyValueMapping, getDerivedStyle } from './nodeUtils';
 import { ZapIcon, ShieldOffIcon, AlertTriangleIcon } from 'lucide-react';
 
-interface FuseNodeData extends BaseNodeData {
+interface FuseNodeData extends ImportedFuseNodeData {
     config?: BaseNodeData['config'] & {
         ratingAmps?: number;
         type?: 'Cartridge' | 'Blade' | 'HRC';
     }
+    elementType: SLDElementType.Fuse;
 }
 
 const FuseNode: React.FC<NodeProps<FuseNodeData>> = ({ data, selected, isConnectable }) => {

@@ -1,6 +1,6 @@
 // components/sld/nodes/PLCNode.tsx
 import React, { memo, useMemo } from 'react';
-import { NodeProps, Handle, Position } from 'reactflow';
+import { NodeProps, Handle, Position, Node } from 'reactflow';
 import { motion } from 'framer-motion';
 import { PLCNodeData, DataPointLink, DataPoint } from '@/types/sld';
 import { useAppStore } from '@/stores/appStore';
@@ -91,6 +91,30 @@ const PLCNode: React.FC<NodeProps<PLCNodeData>> = ({ data, selected, isConnectab
       whileHover="hover" initial="initial"
       transition={{ type: 'spring', stiffness: 300, damping: 12 }}
     >
+<<<<<<< Updated upstream
+=======
+      {!isEditMode && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute top-0.5 right-0.5 h-5 w-5 rounded-full z-20 bg-background/60 hover:bg-secondary/80 p-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            const fullNodeObject: CustomNodeType = {
+                id, type, position, data, selected, dragging, zIndex,
+                width: 100, // Default width since props.width is not available
+                height: 70, // Default height since props.height is not available
+            };
+            setSelectedElementForDetails(fullNodeObject);
+          }}
+          title="View Details"
+        >
+          <InfoIcon className="h-3 w-3 text-primary/80" />
+        </Button>
+      )}
+
+      {/* PLCs often have multiple I/O and network connections */}
+>>>>>>> Stashed changes
       <Handle type="target" position={Position.Top} id="power_in" isConnectable={isConnectable} className="!w-2.5 !h-2.5 !-mt-1 sld-handle-style !bg-red-400 !border-red-500" title="Power In"/>
       <Handle type="source" position={Position.Bottom} id="network_out" isConnectable={isConnectable} className="!w-2.5 !h-2.5 !-mb-1 sld-handle-style !bg-blue-400 !border-blue-500" title="Network/IO"/>
       <Handle type="target" position={Position.Left} id="digital_in" isConnectable={isConnectable} className="!w-2.5 !h-2.5 !-ml-1 sld-handle-style !bg-yellow-400 !border-yellow-500" title="Digital Inputs"/>

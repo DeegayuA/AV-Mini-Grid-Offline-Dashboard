@@ -77,6 +77,14 @@ const ContactorNode: React.FC<NodeProps<ContactorNodeData>> = ({ data, selected,
     ${hasActions ? 'cursor-pointer' : (isNodeEditable ? 'cursor-grab hover:shadow-lg' : 'cursor-default')}
   `;
 
+  const handleInfoClick = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    const fullNodeObject: CustomNodeType = {
+        id, type, position, data, selected, dragging, zIndex, width, height,
+    };
+    setSelectedElementForDetails(fullNodeObject);
+  };
+
   return (
     <motion.div
       className={mainDivClasses}

@@ -2,7 +2,11 @@
 import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow';
 import { motion } from 'framer-motion';
+<<<<<<< Updated upstream
 import { DataPointLink, DataPoint } from '@/types/sld';
+=======
+import { CustomNodeType, DataPointLink, DataPoint, SLDElementType } from '@/types/sld'; // Added CustomNodeType, SLDElementType
+>>>>>>> Stashed changes
 import { useAppStore } from '@/stores/appStore';
 import { 
     getDataPointValue, 
@@ -13,6 +17,10 @@ import {
 import { TextIcon } from 'lucide-react'; // Generic icon for a data label
 
 interface DataLabelNodeData {
+<<<<<<< Updated upstream
+=======
+  elementType: SLDElementType.DataLabel; // Using enum value for type safety
+>>>>>>> Stashed changes
   dataPointLinks?: DataPointLink[];
   label?: string;
   styleConfig?: {
@@ -27,8 +35,15 @@ interface DataLabelNodeData {
   };
 }
 
+<<<<<<< Updated upstream
 const DataLabelNode: React.FC<NodeProps<DataLabelNodeData>> = ({ data, selected, isConnectable, id }) => {
   const { isEditMode, currentUser, realtimeData, dataPoints } = useAppStore(state => ({
+=======
+const DataLabelNode: React.FC<NodeProps<DataLabelNodeData>> = (props) => {
+  const { data, selected, isConnectable, id, type, zIndex, dragging, xPos, yPos } = props; // Destructure all needed props
+  const nodePosition = { x: xPos, y: yPos }; // Create position object
+  const { isEditMode, currentUser, opcUaNodeValues, dataPoints, setSelectedElementForDetails } = useAppStore(state => ({ // Changed realtimeData to opcUaNodeValues
+>>>>>>> Stashed changes
     isEditMode: state.isEditMode,
     currentUser: state.currentUser,
     realtimeData: state.realtimeData,
