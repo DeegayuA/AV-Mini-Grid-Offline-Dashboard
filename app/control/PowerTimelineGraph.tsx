@@ -2,6 +2,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { addPowerTimelineData, getPowerTimelineData } from '@/lib/idb-store';
 import {
     LineChart,
     Line,
@@ -285,14 +286,69 @@ const PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
         setChartData([]); setAnimationKey(Date.now()); setIsGraphReady(false);
         setLastUpdatedDisplayTime('N/A');
         prevDemoUsageRef.current = null; // Reset smoothed usage when config changes
-    }, [timeScale, generationDpIds, usageDpIds, exportDpIds, exportMode, useDemoData]);
+    }, [timeScale, generationDpIds, usageDpIds, exportDpIds, exportMode, useDemoData, allPossibleDataPoints]); // Added allPossibleDataPoints dependency
 
+    // Effect to load historical data
+    useEffect(() => {
+        const loadHistoricalData = async () => {
+            if (useDemoData) {
+                // Demo data always starts fresh for display, but will persist its points.
+                // setChartData([]); // Clear previous data if switching to demo - handled by above useEffect
+                // setIsGraphReady(false); // Will be set true by demo data generation
+                return;
+            }
+
+            if (!generationDpIds.length || !usageDpIds.length) {
+                 // console.log("Timeline: Not loading historical data, generation or usage DPs not configured.");
+                 // setChartData([]); // Handled by above useEffect
+                 setIsGraphReady(false); 
+                 return;
+            }
+
+            const { durationMs } = timeScaleConfig[timeScale];
+            const now = Date.now();
+            const startTimeForHistory = now - durationMs;
+
+            // console.log(`Timeline: Attempting to load historical data from ${new Date(startTimeForHistory).toISOString()} to ${new Date(now).toISOString()}`);
+
+            try {
+                const historicalData = await getPowerTimelineData(startTimeForHistory, now);
+                if (historicalData && historicalData.length > 0) {
+                    // console.log(`Timeline: Loaded ${historicalData.length} historical data points.`);
+                    historicalData.sort((a, b) => a.timestamp - b.timestamp);
+                    setChartData(historicalData);
+                } else {
+                    // console.log("Timeline: No historical data found for the current window.");
+                    // setChartData([]); // Handled by above useEffect if config changes, otherwise start empty
+                }
+            } catch (error) {
+                console.error("Timeline: Failed to load historical power timeline data:", error);
+                // setChartData([]); // Start empty on error
+            }
+            
+            if (!isLive) { // For static charts, graph is ready after loading historical data
+                setIsGraphReady(true);
+            }
+        };
+
+        loadHistoricalData();
+    }, [timeScale, isLive, useDemoData, generationDpIds, usageDpIds, exportDpIds, allPossibleDataPoints]);
+
+
+    // Effect for live updates and persisting data
     useEffect(() => { 
         const dpsConfigured = generationDpIds.length > 0 && usageDpIds.length > 0;
+        
+        // Conditions for not running live updates or initial data population for non-live
         if ((!isLive && !useDemoData) || (!useDemoData && !dpsConfigured)) {
             if (liveUpdateTimer.current) clearInterval(liveUpdateTimer.current);
-            setIsGraphReady(dpsConfigured && !isLive); return;
+            // If not live and DPs are configured, historical load should have set isGraphReady.
+            // If DPs are not configured, historical load (or lack thereof) sets it to false.
+            if (!isLive && dpsConfigured) setIsGraphReady(true); 
+            else if (!dpsConfigured) setIsGraphReady(false);
+            return;
         }
+
         const { durationMs, liveUpdateIntervalMs, pointsToDisplay } = timeScaleConfig[timeScale];
         
         const updateData = () => {
@@ -306,14 +362,26 @@ const PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
                 currentGen = demo.generation; currentUse = demo.usage; currentGridFeed = demo.gridFeed;
                  if (!isGraphReady) setIsGraphReady(true);
             } else {
-                const canProcess = dpsConfigured && allPossibleDataPoints?.length && Object.keys(nodeValues).length > 0;
-                if (canProcess) {
+                // This check ensures we don't try to sum values if essential configs are missing,
+                // even if historical data might have loaded something.
+                const canProcessRealtime = dpsConfigured && allPossibleDataPoints?.length && Object.keys(nodeValues).length > 0;
+                if (canProcessRealtime) {
                     currentGen = sumValuesForDpIds(generationDpIds);
                     currentUse = sumValuesForDpIds(usageDpIds);
                     currentGridFeed = (exportMode === 'manual' && exportDpIds.length > 0) ? sumValuesForDpIds(exportDpIds) : (currentGen - currentUse);
                     if (!isGraphReady) setIsGraphReady(true);
-                } else if (isGraphReady) { /* Was ready, but now no data */ } 
-                else { return; } 
+                } else if (!isGraphReady && !chartData.length) { // No historical data loaded and cannot process new data
+                     setIsGraphReady(false); // Explicitly ensure it's false if we can't get any data
+                     return; 
+                } else if (!isGraphReady && chartData.length > 0) { // Historical data exists, mark as ready
+                    setIsGraphReady(true);
+                } else if (isGraphReady && !canProcessRealtime) { // Was ready, but now cannot process (e.g. nodeValues became empty)
+                    // Keep showing existing data, but don't add new points.
+                    // Or, could set isGraphReady to false if strict "live data required" is desired.
+                    return;
+                } else if (!canProcessRealtime) { // Default return if no new data can be processed
+                    return;
+                }
             }
             
             const isSelfSufficient = currentGridFeed >= 0; 
@@ -325,50 +393,73 @@ const PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
                 gridFeed: parseFloat(currentGridFeed.toFixed(valuePrecision)),
                 isSelfSufficient: isSelfSufficient,
             };
+            
+            if (newPt && typeof newPt.timestamp === 'number') { 
+                addPowerTimelineData(newPt).catch(error => {
+                    console.error("Failed to save power timeline data to IndexedDB:", error);
+                });
+            }
 
             setChartData(prev => {
                 const cutoff = nowMs - durationMs;
-                const maxPts = Math.max(pointsToDisplay + Math.floor(pointsToDisplay * 0.25), 120); // Keep reasonable # of pts
-                let updated = prev.filter(d => d.timestamp >= cutoff);
+                // Ensure prev is an array, especially if historical load failed or returned non-array
+                const prevArray = Array.isArray(prev) ? prev : [];
+                const maxPts = Math.max(pointsToDisplay + Math.floor(pointsToDisplay * 0.25), 120); 
+                let updated = prevArray.filter(d => d.timestamp >= cutoff);
                 updated.push(newPt);
                 return updated.length > maxPts ? updated.slice(-maxPts) : updated;
             });
         };
 
         if (liveUpdateTimer.current) clearInterval(liveUpdateTimer.current);
+        
         // Initial call to populate data immediately if conditions met
-        if (useDemoData || (dpsConfigured && (isLive && Object.keys(nodeValues).length > 0))) {
-           updateData();
-        } else if (!isLive && dpsConfigured && Object.keys(nodeValues).length > 0) {
-           // For non-live, historic data could be pre-populated here if available
-           // For now, assumes non-live relies on existing chartData from elsewhere or stays empty if not pre-populated
-           setIsGraphReady(true); 
+        // (e.g., for live mode, or if demo mode is on)
+        // Avoids initial call if !isLive and historical data should be the only source initially.
+        if (isLive || useDemoData) {
+            if (useDemoData || (dpsConfigured && Object.keys(nodeValues).length > 0)) {
+                updateData();
+            }
+        } else { // Not live, not demo
+            if (dpsConfigured && chartData.length === 0 && Object.keys(nodeValues).length > 0) {
+                // This case is tricky: non-live, DPs configured, but no historical data was loaded.
+                // Do we populate one point from current nodeValues?
+                // updateData(); // This would add one current point. For now, let historical load handle it.
+            }
+            // Ensure graph is marked as ready if not live and DPs are configured (historical data might be empty)
+            if (dpsConfigured) setIsGraphReady(true);
         }
         
         if (isLive || useDemoData) {
-          liveUpdateTimer.current = setInterval(updateData, useDemoData ? 2000 : liveUpdateIntervalMs); // Demo data updates every 2s
+          liveUpdateTimer.current = setInterval(updateData, useDemoData ? 2000 : liveUpdateIntervalMs); 
         }
         return () => { if (liveUpdateTimer.current) clearInterval(liveUpdateTimer.current); };
     }, [
         nodeValues, generationDpIds, usageDpIds, exportDpIds, exportMode, timeScale, 
-        isLive, allPossibleDataPoints, sumValuesForDpIds, isGraphReady, valuePrecision, useDemoData, generateDemoValues
+        isLive, allPossibleDataPoints, sumValuesForDpIds, isGraphReady, valuePrecision, useDemoData, generateDemoValues, chartData.length // Added chartData.length
     ]);
 
     const currentValues = useMemo(() => {
         let liveGen = 0, liveUse = 0, liveGridFeed = 0;
-        if (useDemoData) { 
-             const demo = generateDemoValues(); // Fresh demo values for display header
-             liveGen = demo.generation; liveUse = demo.usage; liveGridFeed = demo.gridFeed;
-        } else {
+        if (useDemoData) {
+            const demo = generateDemoValues(); 
+            liveGen = demo.generation; liveUse = demo.usage; liveGridFeed = demo.gridFeed;
+        } else if (chartData.length > 0 && !isLive) { // For non-live, use the last point from loaded historical data
+            const lastPoint = chartData[chartData.length -1];
+            liveGen = lastPoint.generation;
+            liveUse = lastPoint.usage;
+            liveGridFeed = lastPoint.gridFeed;
+        } else if (Object.keys(nodeValues).length > 0 && generationDpIds.length > 0 && usageDpIds.length > 0) { // For live or initial state with nodeValues
             liveGen = sumValuesForDpIds(generationDpIds); 
             liveUse = sumValuesForDpIds(usageDpIds);
-            // For gridFeed, ensure calculation consistency with how chart data points are made
             if (exportMode === 'manual' && exportDpIds.length > 0) {
                  liveGridFeed = sumValuesForDpIds(exportDpIds);
-            } else { // 'auto' mode or manual with no export DPs
+            } else { 
                  liveGridFeed = liveGen - liveUse;
             }
         }
+        // Default to 0 if none of the above conditions met (e.g., initial load, no data)
+        
         return { 
             generation: parseFloat(liveGen.toFixed(valuePrecision)), 
             usage: parseFloat(liveUse.toFixed(valuePrecision)),
@@ -376,7 +467,7 @@ const PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
             timestamp: (isGraphReady || useDemoData) && chartData.length > 0 ? chartData[chartData.length-1].timestamp : Date.now(),
             isSelfSufficient: liveGridFeed >= 0,
         };
-    }, [sumValuesForDpIds, generationDpIds, usageDpIds, exportDpIds, exportMode, chartData, isGraphReady, valuePrecision, useDemoData, generateDemoValues]);
+    }, [sumValuesForDpIds, generationDpIds, usageDpIds, exportDpIds, exportMode, chartData, isGraphReady, valuePrecision, useDemoData, generateDemoValues, nodeValues, isLive]);
 
     const chartBackgroundFill = useMemo(() => 
         currentValues.isSelfSufficient ? getResolvedColor('backgroundSuccess', resolvedTheme) : getResolvedColor('backgroundDestructive', resolvedTheme)
