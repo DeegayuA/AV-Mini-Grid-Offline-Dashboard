@@ -2,9 +2,9 @@
 import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow';
 import { motion } from 'framer-motion';
-import { BaseNodeData, CustomNodeType, DataPointLink, DataPoint } from '@/types/sld';
+import { BaseNodeData, DataPointLink, DataPoint } from '@/types/sld'; // Removed CustomNodeType as it's not used
 import { useAppStore, useOpcUaNodeValue } from '@/stores/appStore';
-import { getDataPointValue, applyValueMapping, formatDisplayValue } from './nodeUtils';
+import { getDataPointValue, applyValueMapping, formatDisplayValue, getDerivedStyle } from './nodeUtils'; // Added getDerivedStyle
 import { GaugeIcon } from 'lucide-react'; // Placeholder icon
 
 // Define the data structure for GaugeNode
@@ -20,12 +20,11 @@ export interface GaugeNodeData extends BaseNodeData {
 const GaugeNode: React.FC<NodeProps<GaugeNodeData>> = (props) => {
   const { data, selected, isConnectable, id } = props;
 
-  const { opcUaNodeValues, dataPoints, isEditMode, currentUser } = useAppStore(state => ({
-    opcUaNodeValues: state.opcUaNodeValues, // Still needed for fallback and metadata
+  const { dataPoints, isEditMode, currentUser, globalOpcUaNodeValues } = useAppStore(state => ({ // Renamed opcUaNodeValues for clarity
     dataPoints: state.dataPoints,
     isEditMode: state.isEditMode,
     currentUser: state.currentUser,
-    // setSelectedElementForDetails is not used here, can be removed if not needed elsewhere
+    globalOpcUaNodeValues: state.opcUaNodeValues, 
   }));
 
   const isNodeEditable = useMemo(() =>
@@ -39,21 +38,27 @@ const GaugeNode: React.FC<NodeProps<GaugeNodeData>> = (props) => {
 
   // Determine the primary DataPointLink: use valueDataPointLink if available
   const primaryValueLink = data.config?.valueDataPointLink;
-  
-  // Fallback to the first generic dataPointLink if primaryValueLink is not set
+
+  // Fallback to the first generic dataPointLink if primaryValueLink is not set AND targetProperty is 'value'
   const fallbackValueLink = useMemo(() => {
     if (!primaryValueLink && data.dataPointLinks && data.dataPointLinks.length > 0) {
-      // Ensure the first generic link is intended for 'value' or is the only one
-      // This simple fallback just takes the first one. More sophisticated logic could be added.
-      return data.dataPointLinks[0];
+      return data.dataPointLinks.find(link => link.targetProperty === 'value' || !link.targetProperty); // Prefer 'value' or unspecified
     }
     return undefined;
   }, [primaryValueLink, data.dataPointLinks]);
 
   const valueLink = primaryValueLink || fallbackValueLink;
 
-  // Use reactive value if primaryValueLink is set and has a dataPointId (nodeId)
-  const reactiveNodeValue = useOpcUaNodeValue(primaryValueLink?.dataPointId);
+  // Get Node ID for the primary value link
+  const valueLinkNodeId = useMemo(() => {
+    if (valueLink && valueLink.dataPointId && dataPoints) {
+      return dataPoints[valueLink.dataPointId]?.nodeId;
+    }
+    return undefined;
+  }, [valueLink, dataPoints]);
+
+  // Use reactive value for the primary value link
+  const reactivePrimaryValue = useOpcUaNodeValue(valueLinkNodeId);
 
   const { numericValue, formattedValue, displayUnit } = useMemo(() => {
     if (!valueLink || !valueLink.dataPointId || !dataPoints) {
@@ -61,18 +66,17 @@ const GaugeNode: React.FC<NodeProps<GaugeNodeData>> = (props) => {
     }
 
     const dpMeta = dataPoints[valueLink.dataPointId] as DataPoint | undefined;
-    let rawValue: any;
+    let rawValueToProcess: any;
 
-    if (primaryValueLink && primaryValueLink.dataPointId === valueLink.dataPointId) {
-      // Use reactive value if it's from the primary link
-      rawValue = reactiveNodeValue;
-    } else {
-      // Fallback to global store for other cases (e.g., old dataPointLinks or if reactive value is not ready)
-      rawValue = opcUaNodeValues[valueLink.dataPointId] ?? null;
+    // Prioritize reactive value if its nodeId matches the valueLink's nodeId
+    if (valueLinkNodeId && reactivePrimaryValue !== undefined) {
+      rawValueToProcess = reactivePrimaryValue;
+    } else if (valueLinkNodeId) { // If nodeId exists but reactivePrimaryValue is undefined (e.g. initial load)
+      // Attempt to get from global store as a one-time fallback if needed, though useOpcUaNodeValue should handle this.
+      rawValueToProcess = globalOpcUaNodeValues[valueLinkNodeId];
     }
     
-    // Apply mapping if any (applies to both reactive and fallback paths)
-    const mappedValue = applyValueMapping(rawValue, valueLink);
+    const mappedValue = applyValueMapping(rawValueToProcess, valueLink);
     
     let currentNumericValue: number | null = null;
     if (typeof mappedValue === 'number') {
@@ -97,15 +101,15 @@ const GaugeNode: React.FC<NodeProps<GaugeNodeData>> = (props) => {
     // Determine unit: explicit config unit > DP unit > format suffix
     const finalUnit = unit || dpMeta?.unit || valueLink.format?.suffix || '';
 
-    return { 
-        numericValue: currentNumericValue, 
-        formattedValue: finalFormattedValue, 
-        displayUnit: finalUnit 
+    return {
+        numericValue: currentNumericValue,
+        formattedValue: finalFormattedValue,
+        displayUnit: finalUnit
     };
-  }, [valueLink, primaryValueLink, reactiveNodeValue, opcUaNodeValues, dataPoints, unit]); // Removed incorrect dpMeta references
+  }, [valueLink, valueLinkNodeId, reactivePrimaryValue, globalOpcUaNodeValues, dataPoints, unit]);
 
   const clampedValue = useMemo(() => {
-    if (numericValue === null) return minVal; 
+    if (numericValue === null) return minVal;
     return Math.min(Math.max(numericValue, minVal), maxVal);
   }, [numericValue, minVal, maxVal]);
 
@@ -142,6 +146,55 @@ const GaugeNode: React.FC<NodeProps<GaugeNodeData>> = (props) => {
   const valueArcAngle = (percentage / 100) * 180; // Map percentage to 0-180 degrees
   const valueArcPath = describeArc(arcCenterX, arcCenterY, arcRadius, 0, valueArcAngle);
 
+  // --- Derived Styles DataPointLink Handling ---
+  const stylingLinks = useMemo(() => {
+    return (data.dataPointLinks || []).filter(link =>
+      link !== valueLink && // Exclude the primary value link if it's already in data.dataPointLinks
+      (link.targetProperty.startsWith('fill') || link.targetProperty.startsWith('stroke') || link.targetProperty.startsWith('text') ||
+       link.targetProperty.startsWith('background') || link.targetProperty === 'opacity' || link.targetProperty === 'visible' ||
+       link.targetProperty.startsWith('--')) // Include CSS custom properties
+    );
+  }, [data.dataPointLinks, valueLink]);
+
+  // Explicitly subscribe to up to 3 styling links
+  const styleLink1 = useMemo(() => stylingLinks[0], [stylingLinks]);
+  const styleLink1NodeId = useMemo(() => styleLink1 && dataPoints[styleLink1.dataPointId]?.nodeId, [styleLink1, dataPoints]);
+  const styleLink1Value = useOpcUaNodeValue(styleLink1NodeId);
+
+  const styleLink2 = useMemo(() => stylingLinks[1], [stylingLinks]);
+  const styleLink2NodeId = useMemo(() => styleLink2 && dataPoints[styleLink2.dataPointId]?.nodeId, [styleLink2, dataPoints]);
+  const styleLink2Value = useOpcUaNodeValue(styleLink2NodeId);
+
+  const styleLink3 = useMemo(() => stylingLinks[2], [stylingLinks]);
+  const styleLink3NodeId = useMemo(() => styleLink3 && dataPoints[styleLink3.dataPointId]?.nodeId, [styleLink3, dataPoints]);
+  const styleLink3Value = useOpcUaNodeValue(styleLink3NodeId);
+
+  const opcUaDataForDerivedStyle = useMemo(() => {
+    const reactiveValues: Record<string, string | number | boolean> = {};
+
+    // Add primary value if its nodeId is defined and value available
+    if (valueLinkNodeId && reactivePrimaryValue !== undefined) {
+      reactiveValues[valueLinkNodeId] = reactivePrimaryValue;
+    }
+
+    // Add styling link values
+    if (styleLink1NodeId && styleLink1Value !== undefined) reactiveValues[styleLink1NodeId] = styleLink1Value;
+    if (styleLink2NodeId && styleLink2Value !== undefined) reactiveValues[styleLink2NodeId] = styleLink2Value;
+    if (styleLink3NodeId && styleLink3Value !== undefined) reactiveValues[styleLink3NodeId] = styleLink3Value;
+    
+    return reactiveValues;
+  }, [
+    valueLinkNodeId, reactivePrimaryValue,
+    styleLink1NodeId, styleLink1Value,
+    styleLink2NodeId, styleLink2Value,
+    styleLink3NodeId, styleLink3Value,
+  ]);
+  
+  const derivedNodeStyles = useMemo(() => {
+    return getDerivedStyle(data, dataPoints, opcUaDataForDerivedStyle, globalOpcUaNodeValues);
+  }, [data, dataPoints, opcUaDataForDerivedStyle, globalOpcUaNodeValues]);
+
+
   const nodeWidth = 90;
   const nodeHeight = 75; // Adjusted height
 
@@ -150,12 +203,21 @@ const GaugeNode: React.FC<NodeProps<GaugeNodeData>> = (props) => {
       className={`
         sld-node gauge-node group w-[${nodeWidth}px] h-[${nodeHeight}px] rounded-lg shadow-md
         flex flex-col items-center justify-center p-1
-        border-2 border-neutral-400 dark:border-neutral-600
+        border-2 
         bg-card dark:bg-neutral-800 
         transition-all duration-150
         ${selected && isNodeEditable ? 'ring-2 ring-primary ring-offset-1' : selected ? 'ring-1 ring-accent' : ''}
         ${isNodeEditable ? 'cursor-grab hover:shadow-lg' : 'cursor-default'}
       `}
+      style={{ 
+        borderColor: derivedNodeStyles.borderColor || 'var(--border-neutral-strong)', // Default from theme or specific
+        backgroundColor: derivedNodeStyles.backgroundColor, // Let getDerivedStyle override if present
+        color: derivedNodeStyles.color,
+        opacity: derivedNodeStyles.opacity,
+        display: derivedNodeStyles.display,
+        // Spread other derived styles that are not explicitly handled above
+        ...derivedNodeStyles 
+      }}
       title={data.label}
       whileHover={{ scale: isNodeEditable ? 1.03 : 1 }}
       initial={{ scale: 1 }}
@@ -166,25 +228,54 @@ const GaugeNode: React.FC<NodeProps<GaugeNodeData>> = (props) => {
       <Handle type="target" position={Position.Left} id="left_in" isConnectable={isConnectable} className="!w-3 !h-3 sld-handle-style !-ml-1.5" />
       <Handle type="source" position={Position.Right} id="right_out" isConnectable={isConnectable} className="!w-3 !h-3 sld-handle-style !-mr-1.5" />
 
-      <p className="text-[9px] font-semibold text-center truncate w-full px-1" title={data.label}>
+      <p 
+        className="text-[9px] font-semibold text-center truncate w-full px-1" 
+        style={{ color: derivedNodeStyles.textColor || 'inherit' }} // Apply text color from derived styles or inherit
+        title={data.label}
+      >
         {data.label}
       </p>
 
       <div className="relative flex flex-col items-center justify-center w-full">
         <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-auto max-h-[${svgHeight-10}px] mt-0.5">
-          <path d={backgroundArcPath} strokeDasharray="2 2" className="stroke-gray-300 dark:stroke-gray-600" strokeWidth={arcStrokeWidth-2} fill="none" />
+          <path 
+            d={backgroundArcPath} 
+            strokeDasharray="2 2" 
+            className="stroke-gray-300 dark:stroke-gray-600" // Default, can be overridden by derivedStyle
+            style={{ stroke: derivedNodeStyles['--gauge-background-stroke-color'] }} // Example custom property
+            strokeWidth={arcStrokeWidth-2} 
+            fill="none" 
+          />
           {numericValue !== null && (
-            <path d={valueArcPath} className="stroke-primary" strokeWidth={arcStrokeWidth} fill="none" strokeLinecap="round"/>
+            <path 
+              d={valueArcPath} 
+              className="stroke-primary" // Default, can be overridden by derivedStyle
+              style={{ stroke: derivedNodeStyles['--gauge-value-stroke-color'] || derivedNodeStyles.strokeColor }}
+              strokeWidth={arcStrokeWidth} 
+              fill="none" 
+              strokeLinecap="round"
+            />
           )}
         </svg>
         <div className="absolute flex flex-col items-center justify-center" style={{ top: arcCenterY - arcRadius - 5}}>
-            <span className="text-[12px] font-bold text-primary" title={`${formattedValue} ${displayUnit}`}>
+            <span 
+              className="text-[12px] font-bold text-primary" // Default, can be overridden
+              style={{ color: derivedNodeStyles.textColor || derivedNodeStyles['--gauge-value-text-color'] }}
+              title={`${formattedValue} ${displayUnit}`}
+            >
                 {formattedValue}
             </span>
-            {displayUnit && <span className="text-[7px] text-muted-foreground -mt-0.5">{displayUnit}</span>}
+            {displayUnit && <span 
+              className="text-[7px] text-muted-foreground -mt-0.5" // Default, can be overridden
+              style={{ color: derivedNodeStyles.textColor || derivedNodeStyles['--gauge-unit-text-color'] }}
+            >{displayUnit}</span>}
         </div>
       </div>
-       <p className="text-[7px] text-muted-foreground text-center w-full mt-auto leading-tight" title={`Range: ${minVal} - ${maxVal}`}>
+       <p 
+        className="text-[7px] text-muted-foreground text-center w-full mt-auto leading-tight" 
+        style={{ color: derivedNodeStyles.textColor || 'var(--muted-foreground)'}}
+        title={`Range: ${minVal} - ${maxVal}`}
+      >
         {minVal} ... {maxVal}
       </p>
     </motion.div>

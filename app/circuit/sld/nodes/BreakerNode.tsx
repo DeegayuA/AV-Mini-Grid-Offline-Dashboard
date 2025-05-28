@@ -2,25 +2,38 @@
 import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow'; // Reverted to NodeProps
 import { motion } from 'framer-motion';
-import { BreakerNodeData, CustomNodeType, DataPointLink, DataPoint } from '@/types/sld'; // Added CustomNodeType
-import { useAppStore, useOpcUaNodeValue } from '@/stores/appStore'; // Added useOpcUaNodeValue
+import React, { memo, useMemo } from 'react';
+import { NodeProps, Handle, Position } from 'reactflow';
+import { motion } from 'framer-motion';
+import { BreakerNodeData, CustomNodeType, DataPointLink, DataPoint } from '@/types/sld';
+import { useAppStore, useOpcUaNodeValue } from '@/stores/appStore';
 import { getDataPointValue, applyValueMapping, getDerivedStyle } from './nodeUtils';
-import { ZapOffIcon, ZapIcon, ShieldAlertIcon, ShieldCheckIcon, AlertTriangleIcon, InfoIcon } from 'lucide-react'; // Added InfoIcon
-import { Button } from "@/components/ui/button"; // Added Button
+import { ZapOffIcon, ZapIcon, ShieldAlertIcon, ShieldCheckIcon, AlertTriangleIcon, InfoIcon } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { toast } from 'sonner'; // Added for user feedback
 
-const BreakerNode: React.FC<NodeProps<BreakerNodeData>> = (props) => { // Reverted to NodeProps
-  const { data, selected, isConnectable, id, type, zIndex, dragging } = props; // Using standard NodeProps properties
-  const position = (props as any).position;
+const BreakerNode: React.FC<NodeProps<BreakerNodeData>> = (props) => {
+  const { data, selected, isConnectable, id, type, zIndex, dragging } = props;
+  const position = (props as any).position; // Assuming position might be passed this way if not directly on props
   const xPos = position?.x ?? 0;
   const yPos = position?.y ?? 0;
   const width = (props as any).width;
   const height = (props as any).height;
-  const { isEditMode, currentUser, dataPoints, globalOpcUaNodeValues, setSelectedElementForDetails } = useAppStore(state => ({
+
+  const { 
+    isEditMode, 
+    currentUser, 
+    dataPoints, 
+    globalOpcUaNodeValues, 
+    setSelectedElementForDetails,
+    sendJsonMessage // Added sendJsonMessage from appStore
+  } = useAppStore(state => ({
     isEditMode: state.isEditMode,
     currentUser: state.currentUser,
     setSelectedElementForDetails: state.setSelectedElementForDetails,
-    globalOpcUaNodeValues: state.opcUaNodeValues, // Renamed for clarity
+    globalOpcUaNodeValues: state.opcUaNodeValues,
     dataPoints: state.dataPoints,
+    sendJsonMessage: state.sendJsonMessage, // Get sendJsonMessage from the store
   }));
 
   const isNodeEditable = useMemo(() =>
@@ -216,6 +229,49 @@ const BreakerNode: React.FC<NodeProps<BreakerNodeData>> = (props) => { // Revert
 
   const breakerTypeLabel = data.config?.type || 'Breaker';
 
+  const handleControlClick = () => {
+    if (isEditMode) {
+      // In edit mode, clicks are usually for selection/moving, not control actions.
+      // If needed, specific logic for edit mode interactions can be added here,
+      // but generally, control actions are for operational mode.
+      return;
+    }
+
+    const controlNodeId = data.config?.controlNodeId;
+    if (!controlNodeId) {
+      toast.error("Control Action Failed", { description: `Breaker '${data.label}' is not configured for control (missing Control Node ID).` });
+      return;
+    }
+
+    // The `isOpen` state variable already reflects the current operational state of the breaker.
+    // We need to send the *opposite* action. If it's open, we want to close it (send false).
+    const valueToWrite = !isOpen; 
+
+    // Optional: Check DataPoint metadata for expected data type for controlNodeId if available
+    // For now, assuming boolean is the expected type.
+    // const controlDataPoint = Object.values(dataPoints).find(dp => dp.nodeId === controlNodeId);
+    // if (controlDataPoint && controlDataPoint.dataType !== 'Boolean') {
+    //   console.warn(`Control Node ID ${controlNodeId} for breaker ${data.label} might expect a non-boolean value. Sending boolean ${valueToWrite}.`);
+    // }
+
+    if (sendJsonMessage) {
+      sendJsonMessage({
+        type: "WRITE_OPCUA", // Standardized type for writing to an OPC UA node
+        payload: {
+          nodeId: controlNodeId,
+          value: valueToWrite,
+        }
+      });
+      toast.info(`Control signal sent to ${isOpen ? 'close' : 'open'} breaker '${data.label}'.`, {
+        description: `Attempting to set to: ${valueToWrite ? 'OPEN' : 'CLOSED'}`,
+      });
+    } else {
+      // This case should ideally not happen if useWebSocket is properly initialized.
+      toast.error("Real-time Service Error", { description: "Unable to send control signal. Real-time communication is not available." });
+      console.error("sendJsonMessage is not available. WebSocket might not be connected or initialized.");
+    }
+  };
+
   // Choose icon based on status - can be expanded with more DPLinks
   const StatusIcon = useMemo(() => {
     if (processedStatus === 'fault' || processedStatus === 'tripped') return ShieldAlertIcon;
@@ -237,25 +293,27 @@ const BreakerNode: React.FC<NodeProps<BreakerNodeData>> = (props) => { // Revert
         transition-all duration-150
         ${selected && isNodeEditable ? 'ring-2 ring-primary ring-offset-1 dark:ring-offset-neutral-900' : 
           selected ? 'ring-1 ring-accent dark:ring-offset-neutral-900' : ''}
-        ${isNodeEditable ? 'cursor-grab hover:shadow-lg' : 'cursor-default'}
+        ${isNodeEditable ? 'cursor-grab hover:shadow-lg' : (!data.config?.controlNodeId || isEditMode ? 'cursor-default' : 'cursor-pointer hover:shadow-lg')} 
       `}
       style={derivedNodeStyles} // Apply derived styles here
-      variants={{ hover: { scale: isNodeEditable ? 1.04 : 1 }, initial: { scale: 1 } }}
+      variants={{ hover: { scale: (isNodeEditable || !data.config?.controlNodeId || isEditMode) ? 1 : 1.04 }, initial: { scale: 1 } }} // Only scale on hover if clickable
       whileHover="hover"
       initial="initial"
       transition={{ type: 'spring', stiffness: 300, damping: 10 }}
+      onClick={(!isEditMode && data.config?.controlNodeId) ? handleControlClick : undefined} // Attach click handler
     >
-      {!isEditMode && (
+      {/* Info button for details, should not trigger control click */}
+      {!isEditMode && ( 
         <Button
           variant="ghost"
           size="icon"
           className="absolute top-0.5 right-0.5 h-5 w-5 rounded-full z-20 bg-background/60 hover:bg-secondary/80 p-0"
-          onClick={(e) => {
-            e.stopPropagation();
+          onClick={(e) => { // This click should NOT trigger the control action
+            e.stopPropagation(); // Prevent event from bubbling to the parent motion.div
             const fullNodeObject: CustomNodeType = {
                 id, 
                 type, 
-                position: { x: xPos, y: yPos }, // Use xPos, yPos for position
+                position: { x: xPos, y: yPos },
                 data, 
                 selected, 
                 dragging, 
@@ -272,57 +330,52 @@ const BreakerNode: React.FC<NodeProps<BreakerNodeData>> = (props) => { // Revert
         </Button>
       )}
 
+      {/* Handles should also stop propagation if they have their own click/drag handlers in the future */}
       <Handle type="target" position={Position.Top} id="top_in" isConnectable={isConnectable} className="!w-3 !h-3 !bg-slate-400 !border-slate-500 react-flow__handle-common sld-handle-style" />
       <Handle type="source" position={Position.Bottom} id="bottom_out" isConnectable={isConnectable} className="!w-3 !h-3 !bg-slate-400 !border-slate-500 react-flow__handle-common sld-handle-style" />
 
-      <p className="text-[9px] font-medium text-center truncate w-full mt-0.5" style={{ color: derivedNodeStyles.color || statusStyles.main }} title={`${data.label} (${breakerTypeLabel})`}>
-        {data.label}
-      </p>
-      
-      {/* SVG Breaker Symbol or Status Icon */}
-      {/* Option 1: Keep SVG and change its state */}
-      <motion.svg 
-        viewBox="0 0 24 24" 
-        width="32" height="32" 
-        className={`flex-grow`} 
-        style={{ color: derivedNodeStyles.color || statusStyles.iconColor }}
-        initial={false} // Prevent initial animation on mount
-      >
-        <circle cx="12" cy="7" r="2.5" fill="currentColor" /> {/* Top terminal */}
-        <circle cx="12" cy="17" r="2.5" fill="currentColor" /> {/* Bottom terminal */}
-        <line x1="12" y1="9.5" x2="12" y2="14.5" stroke="currentColor" strokeWidth="1.5" /> {/* Vertical bar */}
+      {/* Content that should not trigger control click by itself if specific interactive sub-elements are added later */}
+      <div className="flex flex-col items-center justify-center flex-grow pointer-events-none">
+        <p className="text-[9px] font-medium text-center truncate w-full mt-0.5" style={{ color: derivedNodeStyles.color || statusStyles.main }} title={`${data.label} (${breakerTypeLabel})`}>
+          {data.label}
+        </p>
         
-        {/* Switch arm: using motion.line for smooth transition */}
-        <motion.line
-          key={isOpen ? "open-arm" : "closed-arm"} // Key change helps React trigger animation correctly
-          x1="12"
-          y1="12"
-          initial={false} // Start from current state if already rendered
-          animate={isOpen ? { x2: 18, y2: 8 } : { x2: 12, y2: 9.5 }}
-          transition={{ duration: 0.2, ease: "easeInOut" }}
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-        />
-        
-        <rect x="8" y="11" width="8" height="2" fill="currentColor" className="opacity-60" /> {/* Box body part */}
-        
-        {/* Contact point: fade in/out */}
-        <motion.circle 
-          cx="12" cy="12" r="1.5" fill="currentColor"
-          initial={{ opacity: isOpen ? 0 : 1 }}
-          animate={{ opacity: isOpen ? 0 : 1 }}
-          transition={{ duration: 0.15 }}
-        />
-      </motion.svg>
-      {/* Option 2: Use Lucide icons (if preferred over dynamic SVG) */}
-      {/* <StatusIcon size={32} className={`flex-grow transition-colors ${statusStyles.iconColor}`} style={{ color: derivedNodeStyles.color || statusStyles.iconColor }} /> */}
+        <motion.svg 
+          viewBox="0 0 24 24" 
+          width="32" height="32" 
+          className={`flex-grow`} 
+          style={{ color: derivedNodeStyles.color || statusStyles.iconColor }}
+          initial={false}
+        >
+          <circle cx="12" cy="7" r="2.5" fill="currentColor" />
+          <circle cx="12" cy="17" r="2.5" fill="currentColor" />
+          <line x1="12" y1="9.5" x2="12" y2="14.5" stroke="currentColor" strokeWidth="1.5" />
+          <motion.line
+            key={isOpen ? "open-arm" : "closed-arm"}
+            x1="12"
+            y1="12"
+            initial={false}
+            animate={isOpen ? { x2: 18, y2: 8 } : { x2: 12, y2: 9.5 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+          <rect x="8" y="11" width="8" height="2" fill="currentColor" className="opacity-60" />
+          <motion.circle 
+            cx="12" cy="12" r="1.5" fill="currentColor"
+            initial={{ opacity: isOpen ? 0 : 1 }}
+            animate={{ opacity: isOpen ? 0 : 1 }}
+            transition={{ duration: 0.15 }}
+          />
+        </motion.svg>
 
-      <p className="text-[10px] font-semibold" style={{ color: derivedNodeStyles.color || statusStyles.main }}>
-        {isOpen ? 'OPEN' : 'CLOSED'}
-      </p>
+        <p className="text-[10px] font-semibold" style={{ color: derivedNodeStyles.color || statusStyles.main }}>
+          {isOpen ? 'OPEN' : 'CLOSED'}
+        </p>
+      </div>
 
-      <p className="text-[9px] text-muted-foreground text-center truncate w-full leading-tight" title={data.config?.tripRatingAmps ? `${data.config.tripRatingAmps}A` : breakerTypeLabel}>
+      <p className="text-[9px] text-muted-foreground text-center truncate w-full leading-tight pointer-events-none" title={data.config?.tripRatingAmps ? `${data.config.tripRatingAmps}A` : breakerTypeLabel}>
         {data.config?.tripRatingAmps ? `${data.config.tripRatingAmps}A` : breakerTypeLabel.toUpperCase()}
       </p>
     </motion.div>

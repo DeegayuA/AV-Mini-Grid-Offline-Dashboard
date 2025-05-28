@@ -1,34 +1,35 @@
 // app/circuit/sld/nodes/SwitchNode.tsx
 import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow';
+import React, { memo, useMemo } from 'react';
+import { NodeProps, Handle, Position } from 'reactflow';
 import { motion } from 'framer-motion';
-import { BaseNodeData, CustomNodeType, DataPointLink, DataPoint } from '@/types/sld';
+import { SwitchNodeData, CustomNodeType, DataPoint } from '@/types/sld'; // SwitchNodeData for type
 import { useAppStore, useOpcUaNodeValue } from '@/stores/appStore';
-import { applyValueMapping, getDerivedStyle } from './nodeUtils';
+import { applyValueMapping, getDerivedStyle } from './nodeUtils'; // Removed getDataPointValue as it's not directly used here
 import { InfoIcon, ToggleLeftIcon, ToggleRightIcon } from 'lucide-react';
 import { Button } from "@/components/ui/button";
+import { toast } from 'sonner'; // Added toast
 
-export interface SwitchNodeData extends BaseNodeData {
-  config?: BaseNodeData['config'] & {
-    // Specific config for SwitchNode if any in future, e.g., default state
-  };
-  // The primary state of the switch (on/off) will be driven by a DataPointLink
-  // with targetProperty 'isOn' (convention) or a generic 'value'.
-}
+// SwitchNodeData is defined in types/sld.ts (assuming it extends BaseNodeData)
 
 const SwitchNode: React.FC<NodeProps<SwitchNodeData>> = (props) => {
-  const { data, selected, isConnectable, id, type, zIndex, dragging } = props;
-  const position = (props as any).position;
-  const xPos = position?.x ?? 0;
-  const yPos = position?.y ?? 0;
-  const width = (props as any).width;
-  const height = (props as any).height;
+  const { data, selected, isConnectable, id, type, xPos, yPos, zIndex, dragging, width, height } = props;
 
-  const { isEditMode, currentUser, dataPoints, setSelectedElementForDetails } = useAppStore(state => ({
+  const { 
+    isEditMode, 
+    currentUser, 
+    dataPoints, 
+    setSelectedElementForDetails,
+    sendJsonMessage, // Added sendJsonMessage
+    globalOpcUaNodeValues // Added for getDerivedStyle fallback
+  } = useAppStore(state => ({
     isEditMode: state.isEditMode,
     currentUser: state.currentUser,
     dataPoints: state.dataPoints,
     setSelectedElementForDetails: state.setSelectedElementForDetails,
+    sendJsonMessage: state.sendJsonMessage,
+    globalOpcUaNodeValues: state.opcUaNodeValues,
   }));
 
   const isNodeEditable = useMemo(() =>
@@ -67,23 +68,28 @@ const SwitchNode: React.FC<NodeProps<SwitchNodeData>> = (props) => {
     ) || [];
   }, [data.dataPointLinks, stateLink]);
 
-  // For simplicity, this example won't implement multiple reactive style links like BreakerNode.
-  // It will rely on getDerivedStyle to use non-reactive values or the main stateLink's value if relevant.
-  // A more complete implementation would use multiple useOpcUaNodeValue hooks for styling DPLs.
+  // Similar to BreakerNode, subscribe to a few style links if necessary
+  const styleLink1 = useMemo(() => stylingLinks[0], [stylingLinks]);
+  const styleLink1NodeId = useMemo(() => styleLink1 && dataPoints[styleLink1.dataPointId]?.nodeId, [styleLink1, dataPoints]);
+  const styleLink1Value = useOpcUaNodeValue(styleLink1NodeId);
+
   const opcUaValuesForDerivedStyle = useMemo(() => {
     const values: Record<string, string | number | boolean> = {};
     if (stateOpcUaNodeId && reactiveStateValue !== undefined) {
       values[stateOpcUaNodeId] = reactiveStateValue;
     }
-    // Add other reactive style values here if implemented
+    if (styleLink1NodeId && styleLink1Value !== undefined) {
+      values[styleLink1NodeId] = styleLink1Value;
+    }
     return values;
-  }, [stateOpcUaNodeId, reactiveStateValue]);
+  }, [stateOpcUaNodeId, reactiveStateValue, styleLink1NodeId, styleLink1Value]);
   
   const derivedNodeStyles = useMemo(() => {
-    return getDerivedStyle(data, opcUaValuesForDerivedStyle, dataPoints);
-  }, [data, opcUaValuesForDerivedStyle, dataPoints]);
+    // Pass globalOpcUaNodeValues as the fallback
+    return getDerivedStyle(data, dataPoints, opcUaValuesForDerivedStyle, globalOpcUaNodeValues);
+  }, [data, dataPoints, opcUaValuesForDerivedStyle, globalOpcUaNodeValues]);
 
-  const statusStyles = useMemo(() => {
+  const statusStyles = useMemo(() => { // Base visual state not driven by derived styles
     if (isOn) {
       return { border: 'border-green-600 dark:border-green-500', bg: 'bg-green-600/10 dark:bg-green-900/30', iconColor: 'text-green-600 dark:text-green-500', main: 'text-green-700 dark:text-green-500' };
     }
@@ -97,43 +103,32 @@ const SwitchNode: React.FC<NodeProps<SwitchNodeData>> = (props) => {
       className={`
         sld-node switch-node group w-[70px] h-[70px] rounded-lg shadow-md
         flex flex-col items-center justify-center p-1.5 
-        border-2 ${statusStyles.border} ${statusStyles.bg}
+        border-2 ${derivedNodeStyles.borderColor || statusStyles.border} 
+        ${derivedNodeStyles.backgroundColor || statusStyles.bg}
         bg-card dark:bg-neutral-800 
         transition-all duration-150
         ${selected && isNodeEditable ? 'ring-2 ring-primary ring-offset-1 dark:ring-offset-neutral-900' : 
           selected ? 'ring-1 ring-accent dark:ring-offset-neutral-900' : ''}
-        ${isNodeEditable ? 'cursor-grab hover:shadow-lg' : 'cursor-default'}
+        ${isNodeEditable ? 'cursor-grab hover:shadow-lg' : (!data.config?.controlNodeId || isEditMode ? 'cursor-default' : 'cursor-pointer hover:shadow-lg')}
       `}
-      style={derivedNodeStyles}
-      variants={{ hover: { scale: isNodeEditable ? 1.04 : 1 }, initial: { scale: 1 } }}
+      style={{ // Apply other derived styles not covered by classes
+        color: derivedNodeStyles.color || statusStyles.main,
+        opacity: derivedNodeStyles.opacity,
+        display: derivedNodeStyles.display,
+      }}
+      variants={{ hover: { scale: (isNodeEditable || !data.config?.controlNodeId || isEditMode) ? 1 : 1.04 }, initial: { scale: 1 } }}
       whileHover="hover"
       initial="initial"
       transition={{ type: 'spring', stiffness: 300, damping: 10 }}
-      onDoubleClick={() => {
-        if (!isEditMode) {
-           const fullNodeObject: CustomNodeType = {
-                id, type, position: { x: xPos, y: yPos }, data, selected, 
-                dragging, zIndex, width: width === null ? undefined : width, 
-                height: height === null ? undefined : height, connectable: isConnectable,
-            };
-          setSelectedElementForDetails(fullNodeObject);
-        }
-      }}
+      onClick={(!isEditMode && data.config?.controlNodeId) ? handleControlClick : undefined}
+      // onDoubleClick={handleDoubleClick} // Removed to simplify to single click for control
     >
       {!isEditMode && (
         <Button
           variant="ghost"
           size="icon"
           className="absolute top-0.5 right-0.5 h-5 w-5 rounded-full z-20 bg-background/60 hover:bg-secondary/80 p-0"
-          onClick={(e) => {
-            e.stopPropagation();
-             const fullNodeObject: CustomNodeType = {
-                id, type, position: { x: xPos, y: yPos }, data, selected, 
-                dragging, zIndex, width: width === null ? undefined : width, 
-                height: height === null ? undefined : height, connectable: isConnectable,
-            };
-            setSelectedElementForDetails(fullNodeObject);
-          }}
+          onClick={(e) => handleInfoClick(e)} // Pass event to stop propagation
           title="View Details"
         >
           <InfoIcon className="h-3 w-3 text-primary/80" />
@@ -144,16 +139,19 @@ const SwitchNode: React.FC<NodeProps<SwitchNodeData>> = (props) => {
       <Handle type="source" position={Position.Bottom} id="bottom_out" isConnectable={isConnectable} className="!w-3 !h-3 sld-handle-style" />
       <Handle type="target" position={Position.Left} id="left_in" isConnectable={isConnectable} className="!w-3 !h-3 sld-handle-style" />
       <Handle type="source" position={Position.Right} id="right_out" isConnectable={isConnectable} className="!w-3 !h-3 sld-handle-style" />
-
-      <p className="text-[9px] font-medium text-center truncate w-full mt-0.5" style={{ color: derivedNodeStyles.color || statusStyles.main }} title={data.label}>
-        {data.label || 'Switch'}
-      </p>
       
-      <SwitchIcon size={30} className={`flex-grow transition-colors ${statusStyles.iconColor}`} style={{ color: derivedNodeStyles.color || statusStyles.iconColor }} />
+      {/* Wrap visual content for pointer-events: none */}
+      <div className="flex flex-col items-center justify-center flex-grow pointer-events-none">
+        <p className="text-[9px] font-medium text-center truncate w-full mt-0.5" title={data.label}>
+          {data.label || 'Switch'}
+        </p>
+        
+        <SwitchIcon size={30} className={`flex-grow transition-colors ${derivedNodeStyles.color ? '' : statusStyles.iconColor}`} />
 
-      <p className="text-[10px] font-semibold" style={{ color: derivedNodeStyles.color || statusStyles.main }}>
-        {isOn ? 'ON' : 'OFF'}
-      </p>
+        <p className="text-[10px] font-semibold">
+          {isOn ? 'ON' : 'OFF'}
+        </p>
+      </div>
     </motion.div>
   );
 };

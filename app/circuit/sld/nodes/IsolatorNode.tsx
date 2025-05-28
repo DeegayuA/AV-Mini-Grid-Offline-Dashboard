@@ -1,35 +1,35 @@
 // components/sld/nodes/IsolatorNode.tsx
 import React, { memo, useMemo } from 'react';
-import { NodeProps, Handle, Position } from 'reactflow'; // Reverted to NodeProps
+import React, { memo, useMemo } from 'react';
+import { NodeProps, Handle, Position } from 'reactflow';
 import { motion } from 'framer-motion';
-import { BaseNodeData, CustomNodeType, DataPointLink, DataPoint, SLDElementType } from '@/types/sld'; // Added CustomNodeType and SLDElementType
-import { useAppStore } from '@/stores/appStore';
+import { IsolatorNodeData, CustomNodeType, DataPoint, SLDElementType } from '@/types/sld'; // IsolatorNodeData for type
+import { useAppStore, useOpcUaNodeValue } from '@/stores/appStore'; // Added useOpcUaNodeValue
 import { getDataPointValue, applyValueMapping, getDerivedStyle } from './nodeUtils';
-import { AlertTriangleIcon, InfoIcon } from 'lucide-react'; // For fault/warning states. Added InfoIcon
-import { Button } from "@/components/ui/button"; // Added Button
+import { AlertTriangleIcon, InfoIcon } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { toast } from 'sonner'; // Added toast
 
-interface IsolatorNodeData extends BaseNodeData {
-    elementType: SLDElementType.Isolator;  // Use enum value instead of string literal
-    config?: BaseNodeData['config'] & {
-        poles?: number;
-        loadBreak?: boolean;
-    }
-}
+// IsolatorNodeData is defined in types/sld.ts
+// NodeProps<IsolatorNodeData> can be used directly.
 
-// Extended node props with additional properties needed for our component
-interface ExtendedNodeProps extends NodeProps<IsolatorNodeData> {
-  width?: number;
-  height?: number;
-}
-
-const IsolatorNode: React.FC<ExtendedNodeProps> = (props) => {
-  const { data, selected, isConnectable, id, type, xPos, yPos, zIndex, dragging, width, height } = props; // Adjusted destructuring
-  const { isEditMode, currentUser, opcUaNodeValues, dataPoints, setSelectedElementForDetails } = useAppStore(state => ({ // Changed realtimeData to opcUaNodeValues
+const IsolatorNode: React.FC<NodeProps<IsolatorNodeData>> = (props) => { // Using NodeProps<IsolatorNodeData>
+  const { data, selected, isConnectable, id, type, xPos, yPos, zIndex, dragging, width, height } = props;
+  
+  const { 
+    isEditMode, 
+    currentUser, 
+    globalOpcUaNodeValues, // Renamed for clarity
+    dataPoints, 
+    setSelectedElementForDetails,
+    sendJsonMessage // Added sendJsonMessage
+  } = useAppStore(state => ({
     isEditMode: state.isEditMode,
     currentUser: state.currentUser,
     setSelectedElementForDetails: state.setSelectedElementForDetails,
-    opcUaNodeValues: state.opcUaNodeValues, // Changed
+    globalOpcUaNodeValues: state.opcUaNodeValues,
     dataPoints: state.dataPoints,
+    sendJsonMessage: state.sendJsonMessage,
   }));
 
   const isNodeEditable = useMemo(() =>
@@ -37,46 +37,65 @@ const IsolatorNode: React.FC<ExtendedNodeProps> = (props) => {
     [isEditMode, currentUser]
   );
 
+  // --- Reactive Data Point Handling for Isolator State ---
+  const statusLink = useMemo(() => data.dataPointLinks?.find(link => link.targetProperty === 'status'), [data.dataPointLinks]);
+  const statusDataPointConfig = useMemo(() => statusLink ? dataPoints[statusLink.dataPointId] : undefined, [statusLink, dataPoints]);
+  const statusOpcUaNodeId = useMemo(() => statusDataPointConfig?.nodeId, [statusDataPointConfig]);
+  const reactiveStatusValue = useOpcUaNodeValue(statusOpcUaNodeId);
+
+  const isOpenLink = useMemo(() => data.dataPointLinks?.find(link => link.targetProperty === 'isOpen'), [data.dataPointLinks]);
+  const isOpenDataPointConfig = useMemo(() => isOpenLink ? dataPoints[isOpenLink.dataPointId] : undefined, [isOpenLink, dataPoints]);
+  const isOpenOpcUaNodeId = useMemo(() => isOpenDataPointConfig?.nodeId, [isOpenDataPointConfig]);
+  const reactiveIsOpenValue = useOpcUaNodeValue(isOpenOpcUaNodeId);
+
   const processedStatus = useMemo(() => {
-    const statusLink = data.dataPointLinks?.find(link => link.targetProperty === 'status');
-    if (statusLink && dataPoints && dataPoints[statusLink.dataPointId] && opcUaNodeValues) { // Added dataPoints and opcUaNodeValues checks
-      const rawValue = getDataPointValue(statusLink.dataPointId, opcUaNodeValues, dataPoints); // Pass all three
-      return applyValueMapping(rawValue, statusLink);
+    if (statusLink && statusDataPointConfig && reactiveStatusValue !== undefined) {
+      return applyValueMapping(reactiveStatusValue, statusLink);
     }
-    return data.status || 'open'; // Default to open
-  }, [data.dataPointLinks, data.status, opcUaNodeValues, dataPoints]);
+    return data.status || 'open'; // Default to open if no status DPL
+  }, [statusLink, statusDataPointConfig, reactiveStatusValue, data.status]);
 
   const isOpen = useMemo(() => {
-    const isOpenLink = data.dataPointLinks?.find(link => link.targetProperty === 'isOpen');
-    if (isOpenLink && dataPoints && dataPoints[isOpenLink.dataPointId] && opcUaNodeValues) { // Added dataPoints and opcUaNodeValues checks
-      const rawValue = getDataPointValue(isOpenLink.dataPointId, opcUaNodeValues, dataPoints); // Pass all three
-      const mappedValue = applyValueMapping(rawValue, isOpenLink);
+    if (isOpenLink && isOpenDataPointConfig && reactiveIsOpenValue !== undefined) {
+      const mappedValue = applyValueMapping(reactiveIsOpenValue, isOpenLink);
       return mappedValue === true || String(mappedValue).toLowerCase() === 'true' || Number(mappedValue) === 1;
     }
-    // Fallback logic based on processedStatus
+    // Fallback logic based on processedStatus if no dedicated isOpen DPL
     return processedStatus === 'open' || processedStatus === 'isolated';
-  }, [data.dataPointLinks, processedStatus, opcUaNodeValues, dataPoints]);
-
+  }, [isOpenLink, isOpenDataPointConfig, reactiveIsOpenValue, processedStatus]);
 
   const { statusText, baseClasses, effectiveColor } = useMemo(() => {
     let text = isOpen ? 'OPEN' : 'CLOSED';
     let classes = isOpen 
-        ? 'border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400' 
-        : 'border-green-500 bg-green-500/10 text-green-600 dark:text-green-400';
+        ? 'border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400' // Typically open might be amber/yellow or neutral
+        : 'border-green-500 bg-green-500/10 text-green-600 dark:text-green-400'; // Closed is typically green
     
-    if (processedStatus === 'fault' || processedStatus === 'alarm') {
+    // Override with fault/warning if applicable
+    if (String(processedStatus).toLowerCase() === 'fault' || String(processedStatus).toLowerCase() === 'alarm') {
         text = 'FAULT';
         classes = 'border-destructive bg-destructive/10 text-destructive';
-    } else if (processedStatus === 'warning') {
+    } else if (String(processedStatus).toLowerCase() === 'warning') {
         text = 'WARNING';
         classes = 'border-yellow-500 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400';
     }
-    return { statusText: text, baseClasses: classes, effectiveColor: classes.split(' ')[2] };
+    return { statusText: text, baseClasses: classes, effectiveColor: classes.split(' ')[2] }; // text color is usually the 3rd class
   }, [isOpen, processedStatus]);
   
+  const opcUaDataForDerivedStyle = useMemo(() => {
+    const values: Record<string, string | number | boolean> = {};
+    if (statusOpcUaNodeId && reactiveStatusValue !== undefined) {
+      values[statusOpcUaNodeId] = reactiveStatusValue;
+    }
+    if (isOpenOpcUaNodeId && reactiveIsOpenValue !== undefined) {
+      values[isOpenOpcUaNodeId] = reactiveIsOpenValue;
+    }
+    // Add other reactive style values here if implemented
+    return values;
+  }, [statusOpcUaNodeId, reactiveStatusValue, isOpenOpcUaNodeId, reactiveIsOpenValue]);
+
   const derivedNodeStyles = useMemo(() => 
-    getDerivedStyle(data, opcUaNodeValues, dataPoints), // Changed realtimeData to opcUaNodeValues
-    [data, opcUaNodeValues, dataPoints]
+    getDerivedStyle(data, dataPoints, opcUaDataForDerivedStyle, globalOpcUaNodeValues),
+    [data, dataPoints, opcUaDataForDerivedStyle, globalOpcUaNodeValues]
   );
 
   const IsolatorArmSVG = ({ className, isOpen }: { className?: string, isOpen?: boolean }) => {
@@ -109,62 +128,96 @@ const IsolatorNode: React.FC<ExtendedNodeProps> = (props) => {
     bg-card dark:bg-neutral-800
     transition-all duration-150
     ${selected && isNodeEditable ? 'ring-2 ring-primary ring-offset-1' : selected ? 'ring-1 ring-accent' : ''}
-    ${isNodeEditable ? 'cursor-grab hover:shadow-lg' : 'cursor-default'}
+    ${isNodeEditable ? 'cursor-grab hover:shadow-lg' : (!data.config?.controlNodeId || isEditMode ? 'cursor-default' : 'cursor-pointer hover:shadow-lg')}
   `;
   const finalEffectiveColor = derivedNodeStyles.color || effectiveColor;
+
+  const handleControlClick = () => {
+    if (isEditMode) return;
+
+    const controlNodeId = data.config?.controlNodeId;
+    if (!controlNodeId) {
+      toast.error("Control Action Failed", { description: `Isolator '${data.label}' is not configured for control.` });
+      return;
+    }
+
+    const valueToWrite = !isOpen; // Toggle the current state
+
+    if (sendJsonMessage) {
+      sendJsonMessage({
+        type: "WRITE_OPCUA",
+        payload: {
+          nodeId: controlNodeId,
+          value: valueToWrite,
+        }
+      });
+      toast.info(`Control signal sent to ${isOpen ? 'close' : 'open'} isolator '${data.label}'.`, {
+        description: `Attempting to set to: ${valueToWrite ? 'OPEN' : 'CLOSED'}`,
+      });
+    } else {
+      toast.error("Real-time Service Error", { description: "Unable to send control signal." });
+    }
+  };
+  
+  const handleInfoClick = (event: React.MouseEvent) => {
+    event.stopPropagation(); // Prevent triggering control click
+    const fullNodeObject: CustomNodeType = {
+        id, 
+        type: type || SLDElementType.Isolator, // Ensure type is passed
+        position: { x: xPos, y: yPos }, 
+        data, 
+        selected, 
+        dragging, 
+        zIndex, 
+        width, 
+        height, 
+        connectable: isConnectable,
+    };
+    setSelectedElementForDetails(fullNodeObject);
+  };
 
   return (
     <motion.div
       className={mainDivClasses}
       style={derivedNodeStyles} // Derived styles can override all aspects
-      variants={{ hover: { scale: isNodeEditable ? 1.04 : 1 }, initial: { scale: 1 } }}
+      variants={{ hover: { scale: (isNodeEditable || !data.config?.controlNodeId || isEditMode) ? 1 : 1.04 }, initial: { scale: 1 } }}
       whileHover="hover" initial="initial"
       transition={{ type: 'spring', stiffness: 300, damping: 10 }}
+      onClick={(!isEditMode && data.config?.controlNodeId) ? handleControlClick : undefined}
     >
       {!isEditMode && (
         <Button
           variant="ghost"
           size="icon"
           className="absolute top-0.5 right-0.5 h-5 w-5 rounded-full z-20 bg-background/60 hover:bg-secondary/80 p-0"
-          onClick={(e) => {
-            const fullNodeObject: CustomNodeType = {
-                id, 
-                type, 
-                position: { x: xPos, y: yPos }, // Use xPos, yPos for position
-                data: { ...data, elementType: SLDElementType.Isolator } as any, // Use enum value
-                selected, 
-                dragging, 
-                zIndex, 
-                width, 
-                height, 
-                connectable: isConnectable,
-            };
-            setSelectedElementForDetails(fullNodeObject);
-          }}
+          onClick={handleInfoClick} // Already has stopPropagation
           title="View Details"
         >
           <InfoIcon className="h-3 w-3 text-primary/80" />
         </Button>
       )}
-
-      <p className={`text-[9px] font-medium text-center truncate w-full leading-none ${derivedNodeStyles.color ? '' : 'text-foreground dark:text-neutral-200'}`} title={data.label}>
-        {data.label}
-      </p>
       
-      <div className="flex flex-col items-center my-0.5 pointer-events-none h-[32px] justify-center relative">
-         <div className={`w-1.5 h-1.5 rounded-full absolute top-0`} style={{backgroundColor: finalEffectiveColor}}></div> {/* Top contact */}
-         <IsolatorArmSVG className={`${finalEffectiveColor}`} isOpen={isOpen} />
-         <div className={`w-1.5 h-1.5 rounded-full absolute bottom-0`} style={{backgroundColor: finalEffectiveColor}}></div> {/* Bottom contact */}
-         {(processedStatus === 'fault' || processedStatus === 'alarm' || processedStatus === 'warning') && (
-            <motion.div initial={{opacity:0}} animate={{opacity:1}} className="absolute">
-                 <AlertTriangleIcon size={14} className={finalEffectiveColor} />
-            </motion.div>
-         )}
+      {/* Wrap visual content for pointer-events: none */}
+      <div className="flex flex-col items-center justify-between flex-grow pointer-events-none">
+        <p className={`text-[9px] font-medium text-center truncate w-full leading-none ${derivedNodeStyles.color ? '' : 'text-foreground dark:text-neutral-200'}`} title={data.label}>
+          {data.label}
+        </p>
+        
+        <div className="flex flex-col items-center my-0.5 h-[32px] justify-center relative">
+           <div className={`w-1.5 h-1.5 rounded-full absolute top-0`} style={{backgroundColor: finalEffectiveColor}}></div> {/* Top contact */}
+           <IsolatorArmSVG className={`${finalEffectiveColor}`} isOpen={isOpen} />
+           <div className={`w-1.5 h-1.5 rounded-full absolute bottom-0`} style={{backgroundColor: finalEffectiveColor}}></div> {/* Bottom contact */}
+           {(String(processedStatus).toLowerCase() === 'fault' || String(processedStatus).toLowerCase() === 'alarm' || String(processedStatus).toLowerCase() === 'warning') && (
+              <motion.div initial={{opacity:0}} animate={{opacity:1}} className="absolute">
+                   <AlertTriangleIcon size={14} className={finalEffectiveColor} />
+              </motion.div>
+           )}
+        </div>
+        
+        <p className={`text-[9px] font-bold leading-tight ${finalEffectiveColor}`}>
+          {statusText}
+        </p>
       </div>
-      
-      <p className={`text-[9px] font-bold leading-tight ${finalEffectiveColor}`}>
-        {statusText}
-      </p>
     </motion.div>
   );
 };

@@ -29,38 +29,76 @@ const DataLabelNode: React.FC<NodeProps<DataLabelNodeType>> = (props) => { // Re
     isEditMode: state.isEditMode && state.currentUser?.role === 'admin', // Combined admin check
     currentUser: state.currentUser,
     setSelectedElementForDetails: state.setSelectedElementForDetails,
-    dataPoints: state.dataPoints, 
-  }));
-  
-  // Get OPC UA node values from app store instead of using the hook directly
-  const { opcUaNodeValues } = useAppStore(state => ({
-    opcUaNodeValues: state.opcUaNodeValues,
+    dataPoints: state.dataPoints,
   }));
 
-  // --- Main Display DataPointLink Handling (Reverted to use opcUaNodeValues from store for simplicity, as this node doesn't use useOpcUaNodeValue hook yet)
-  const mainDisplayLink = useMemo(() => 
+  // --- Main Display DataPointLink Handling ---
+  const mainDisplayLink = useMemo(() =>
     data.dataPointLinks?.find(link => link.targetProperty === 'value' || link.targetProperty === 'text'),
     [data.dataPointLinks]
   );
 
+  const mainDisplayNodeId = useMemo(() => {
+    if (mainDisplayLink && dataPoints && dataPoints[mainDisplayLink.dataPointId]) {
+      return dataPoints[mainDisplayLink.dataPointId]?.nodeId;
+    }
+    return undefined;
+  }, [mainDisplayLink, dataPoints]);
+
+  const mainDisplayRawValue = useOpcUaNodeValue(mainDisplayNodeId);
+
   const { displayText, unitText } = useMemo(() => {
-    if (mainDisplayLink && dataPoints && dataPoints[mainDisplayLink.dataPointId] && opcUaNodeValues) {
+    if (mainDisplayLink && dataPoints && dataPoints[mainDisplayLink.dataPointId]) {
       const dpMeta = dataPoints[mainDisplayLink.dataPointId] as DataPoint;
-      const rawValue = getDataPointValue(mainDisplayLink.dataPointId, opcUaNodeValues, dataPoints);
+      // Construct primaryOpcUaValues for getDataPointValue
+      const primaryValues: Record<string, string | number | boolean> = {};
+      if (mainDisplayNodeId && mainDisplayRawValue !== undefined) {
+        primaryValues[mainDisplayNodeId] = mainDisplayRawValue;
+      }
+      // Pass primaryValues to getDataPointValue
+      const rawValue = getDataPointValue(mainDisplayLink.dataPointId, dataPoints, primaryValues);
       const mappedValue = applyValueMapping(rawValue, mainDisplayLink);
       const formattedText = formatDisplayValue(mappedValue, mainDisplayLink.format, dpMeta?.dataType);
       const unit = mainDisplayLink.format?.suffix || dpMeta?.unit || '';
       return { displayText: formattedText, unitText: unit };
     }
     return { displayText: data.text || data.label || '---', unitText: '' };
-  }, [mainDisplayLink, data.label, data.text, opcUaNodeValues, dataPoints]);
+  }, [mainDisplayLink, data.label, data.text, mainDisplayRawValue, dataPoints, mainDisplayNodeId]);
 
 
-  // Derive dynamic styles (e.g., color based on value, visibility)
-  // For DataLabelNode, this might be less common unless its text color/visibility is data-driven
-  const derivedNodeStyles = useMemo(() => 
-    getDerivedStyle(data, opcUaNodeValues, dataPoints), // Using global opcUaNodeValues for now
-    [data, opcUaNodeValues, dataPoints]
+  // --- Derived Styles DataPointLink Handling ---
+  const opcUaDataForDerivedStyle = useMemo(() => {
+    const reactiveValues: Record<string, string | number | boolean> = {};
+    if (data.dataPointLinks && dataPoints) {
+      data.dataPointLinks.forEach(link => {
+        // Exclude the main display link if it's already handled, though harmless if included
+        // if (link === mainDisplayLink) return; 
+
+        const dp = dataPoints[link.dataPointId];
+        if (dp?.nodeId) {
+          // This is a conceptual placeholder. In a real scenario, you'd call useOpcUaNodeValue for *each* of these.
+          // However, hooks cannot be called in loops or callbacks.
+          // So, we'd need a more complex setup if MANY distinct nodeIds are used for styling,
+          // possibly involving a custom hook or component that aggregates these.
+          // For now, assuming getDerivedStyle will use the global store as a fallback if a value isn't in primaryOpcUaValues.
+          // Or, if only a few style-driving data points, they could be handled like mainDisplayRawValue.
+          // Let's assume for this refactor, we'll pass what reactive values we *do* have (e.g. mainDisplayRawValue if relevant to style)
+          // and let getDerivedStyle use its existing fallback logic for others.
+          // A more advanced solution might involve a context or a different hook pattern for multiple reactive values.
+          if (dp.nodeId === mainDisplayNodeId && mainDisplayRawValue !== undefined) {
+             reactiveValues[dp.nodeId] = mainDisplayRawValue;
+          }
+          // If other specific dataPointLinks were critical for styling and needed to be reactive,
+          // they would need their own useOpcUaNodeValue hooks declared at the top level.
+        }
+      });
+    }
+    return reactiveValues;
+  }, [data.dataPointLinks, dataPoints, mainDisplayNodeId, mainDisplayRawValue]);
+
+  const derivedNodeStyles = useMemo(() =>
+    getDerivedStyle(data, dataPoints, opcUaDataForDerivedStyle, useAppStore.getState().opcUaNodeValues), // Pass reactive values and global fallbacks
+    [data, dataPoints, opcUaDataForDerivedStyle]
   );
 
   // Combine static styles from data.styleConfig with derived dynamic styles
