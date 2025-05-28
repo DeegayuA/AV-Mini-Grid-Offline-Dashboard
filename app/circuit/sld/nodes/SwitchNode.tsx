@@ -1,6 +1,8 @@
 // app/circuit/sld/nodes/SwitchNode.tsx
 import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow';
+import React, { memo, useMemo } from 'react';
+import { NodeProps, Handle, Position } from 'reactflow';
 import { motion } from 'framer-motion';
 import { SwitchNodeData, CustomNodeType, DataPoint } from '@/types/sld'; // SwitchNodeData for type
 import { useAppStore, useOpcUaNodeValue } from '@/stores/appStore';

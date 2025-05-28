@@ -45,8 +45,8 @@ import { useAppStore } from '@/stores/appStore';
 import { ComboboxOption, SearchableSelect } from './SearchableSelect';
 import { MultiSelectCombobox, MultiSelectOption } from './MultiSelectCombobox'; // Import MultiSelectCombobox
 import { AVAILABLE_SLD_LAYOUT_IDS } from '@/config/constants';
-// import { ValueMappingCard } from './ValueMappingCard';
-// import { DisplayFormatCard } from './DisplayFormatCard';
+import { ValueMappingCard } from './ValueMappingCard';
+import { DisplayFormatCard } from './DisplayFormatCard';
 
 
 // --- Helper Data and Functions ---
