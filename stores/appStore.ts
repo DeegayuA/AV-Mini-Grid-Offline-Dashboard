@@ -44,7 +44,6 @@ interface AppState {
   isEditMode: boolean;
   currentUser: User | null;
   selectedElementForDetails: CustomNodeType | CustomFlowEdge | null; // Added for detail sheet
-  sendJsonMessage?: (message: any) => void; 
 }
 
 const initialState: AppState = {

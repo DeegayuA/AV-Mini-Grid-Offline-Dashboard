@@ -1,5 +1,6 @@
 // components/sld/nodes/FuseNode.tsx
 import React, { memo, useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow'; // Simplified imports, ExtendedNodeProps not strictly necessary
 import { motion } from 'framer-motion';
 import { FuseNodeData, CustomNodeType, DataPoint, SLDElementType } from '@/types/sld'; // Removed DataPointLink as it's not directly used for state logic here yet
