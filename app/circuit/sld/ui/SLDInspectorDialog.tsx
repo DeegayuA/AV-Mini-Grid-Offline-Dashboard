@@ -45,8 +45,9 @@ import { useAppStore } from '@/stores/appStore';
 import { ComboboxOption, SearchableSelect } from './SearchableSelect';
 import { MultiSelectCombobox, MultiSelectOption } from './MultiSelectCombobox'; // Import MultiSelectCombobox
 import { AVAILABLE_SLD_LAYOUT_IDS } from '@/config/constants';
-// import { ValueMappingCard } from './ValueMappingCard';
-// import { DisplayFormatCard } from './DisplayFormatCard';
+import { ValueMappingCard } from './ValueMappingCard';
+import DisplayFormatCard from './DisplayFormatCard';
+import { Textarea } from '@/components/ui/textarea';
 
 
 // --- Helper Data and Functions ---
@@ -145,6 +146,14 @@ const getElementTypeName = (element: CustomNodeType | CustomFlowEdge | null): st
 };
 
 // --- Main Component ---
+interface SLDInspectorDialogProps {
+    isOpen: boolean;
+    onOpenChange: (open: boolean) => void;
+    selectedElement: CustomNodeType | CustomFlowEdge | null;
+    onUpdateElement: (element: CustomNodeType | CustomFlowEdge) => void;
+    onDeleteElement: (elementId: string) => void;
+}
+
 const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
     isOpen, onOpenChange, selectedElement, onUpdateElement, onDeleteElement
 }) => {
@@ -666,13 +675,13 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
                                                 </CollapsibleTrigger>
                                                 <CollapsibleContent className="pt-3 space-y-4">
                                                     <ValueMappingCard 
-                                                        link={link} 
-                                                        onUpdate={(updatedMapping) => handleDataLinkChange(index, 'valueMapping', updatedMapping)}
+                                                        valueMapping={link.valueMapping}
+                                                        onUpdate={(updatedMapping: any) => handleDataLinkChange(index, 'valueMapping', updatedMapping)}
                                                         dataPointId={link.dataPointId}
                                                     />
                                                     <DisplayFormatCard 
-                                                        link={link} 
-                                                        onUpdate={(updatedFormat) => handleDataLinkChange(index, 'format', updatedFormat)}
+                                                        format={link.format} 
+                                                        onUpdate={(updatedFormat: any) => handleDataLinkChange(index, 'format', updatedFormat)}
                                                         dataPointId={link.dataPointId}
                                                     />
                                                 </CollapsibleContent>

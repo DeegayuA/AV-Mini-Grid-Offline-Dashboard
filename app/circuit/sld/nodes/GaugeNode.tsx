@@ -230,7 +230,7 @@ const GaugeNode: React.FC<NodeProps<GaugeNodeData>> = (props) => {
 
       <p 
         className="text-[9px] font-semibold text-center truncate w-full px-1" 
-        style={{ color: derivedNodeStyles.textColor || 'inherit' }} // Apply text color from derived styles or inherit
+        style={{ color: derivedNodeStyles.color || 'inherit' }} // Apply text color from derived styles or inherit
         title={data.label}
       >
         {data.label}
@@ -250,7 +250,7 @@ const GaugeNode: React.FC<NodeProps<GaugeNodeData>> = (props) => {
             <path 
               d={valueArcPath} 
               className="stroke-primary" // Default, can be overridden by derivedStyle
-              style={{ stroke: derivedNodeStyles['--gauge-value-stroke-color'] || derivedNodeStyles.strokeColor }}
+              style={{ stroke: derivedNodeStyles['--gauge-value-stroke-color'] || derivedNodeStyles.stroke }}
               strokeWidth={arcStrokeWidth} 
               fill="none" 
               strokeLinecap="round"
@@ -260,20 +260,20 @@ const GaugeNode: React.FC<NodeProps<GaugeNodeData>> = (props) => {
         <div className="absolute flex flex-col items-center justify-center" style={{ top: arcCenterY - arcRadius - 5}}>
             <span 
               className="text-[12px] font-bold text-primary" // Default, can be overridden
-              style={{ color: derivedNodeStyles.textColor || derivedNodeStyles['--gauge-value-text-color'] }}
+              style={{ color: derivedNodeStyles.color || derivedNodeStyles['--gauge-value-text-color'] }}
               title={`${formattedValue} ${displayUnit}`}
             >
                 {formattedValue}
             </span>
             {displayUnit && <span 
               className="text-[7px] text-muted-foreground -mt-0.5" // Default, can be overridden
-              style={{ color: derivedNodeStyles.textColor || derivedNodeStyles['--gauge-unit-text-color'] }}
+              style={{ color: derivedNodeStyles.color || derivedNodeStyles['--gauge-unit-text-color'] }}
             >{displayUnit}</span>}
         </div>
       </div>
        <p 
         className="text-[7px] text-muted-foreground text-center w-full mt-auto leading-tight" 
-        style={{ color: derivedNodeStyles.textColor || 'var(--muted-foreground)'}}
+        style={{ color: derivedNodeStyles.color || 'var(--muted-foreground)'}}
         title={`Range: ${minVal} - ${maxVal}`}
       >
         {minVal} ... {maxVal}
