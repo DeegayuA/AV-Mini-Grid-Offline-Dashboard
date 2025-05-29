@@ -1,6 +1,5 @@
 // components/sld/nodes/IsolatorNode.tsx
 import React, { memo, useMemo } from 'react';
-import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow';
 import { motion } from 'framer-motion';
 import { IsolatorNodeData, CustomNodeType, DataPoint, SLDElementType } from '@/types/sld'; // IsolatorNodeData for type
@@ -14,7 +13,9 @@ import { toast } from 'sonner'; // Added toast
 // NodeProps<IsolatorNodeData> can be used directly.
 
 const IsolatorNode: React.FC<NodeProps<IsolatorNodeData>> = (props) => { // Using NodeProps<IsolatorNodeData>
-  const { data, selected, isConnectable, id, type, xPos, yPos, zIndex, dragging, width, height } = props;
+  const { data, selected, isConnectable, id, type, zIndex, dragging, position, xPos, yPos } = props;
+  const xPosition = xPos ?? position?.x ?? 0;
+  const yPosition = yPos ?? position?.y ?? 0;
   
   const { 
     isEditMode, 
@@ -164,13 +165,11 @@ const IsolatorNode: React.FC<NodeProps<IsolatorNodeData>> = (props) => { // Usin
     const fullNodeObject: CustomNodeType = {
         id, 
         type: type || SLDElementType.Isolator, // Ensure type is passed
-        position: { x: xPos, y: yPos }, 
+        position: { x: xPosition, y: yPosition }, 
         data, 
         selected, 
         dragging, 
         zIndex, 
-        width, 
-        height, 
         connectable: isConnectable,
     };
     setSelectedElementForDetails(fullNodeObject);

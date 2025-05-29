@@ -96,6 +96,33 @@ const SwitchNode: React.FC<NodeProps<SwitchNodeData>> = (props) => {
 
   const SwitchIcon = isOn ? ToggleRightIcon : ToggleLeftIcon;
 
+  // Handle info icon click to view node details
+  const handleInfoClick = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent triggering parent onClick
+    const customNode: CustomNodeType = {
+      ...props,
+      position: { x: props.xPos ?? 0, y: props.yPos ?? 0 }
+    };
+    setSelectedElementForDetails(customNode);
+  };
+
+  // Handle control click for toggling the switch
+  const handleControlClick = () => {
+    if (!data.config?.controlNodeId || !sendJsonMessage) return;
+    
+    try {
+      sendJsonMessage({
+        type: 'OPC_UA_WRITE',
+        nodeId: data.config.controlNodeId,
+        value: !isOn, // Toggle the current state
+      });
+      toast.success(`Switch ${isOn ? 'turned off' : 'turned on'}`);
+    } catch (error) {
+      toast.error('Failed to toggle switch');
+      console.error('Error toggling switch:', error);
+    }
+  };
+
   return (
     <motion.div
       className={`
