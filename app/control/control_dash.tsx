@@ -8,10 +8,17 @@ import { Orbit } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
 import { 
-    Settings, PlusCircle, Clock, Trash2, RotateCcw, Power, AlertTriangle, Check, 
-    ShieldAlert, InfoIcon as InfoIconLucide, Loader2, Maximize2, X, Pencil, LayoutList 
+    Settings, PlusCircle, Clock, Trash2, RotateCcw, Power, AlertTriangle, Check,
+    ShieldAlert, InfoIcon as InfoIconLucide, Loader2, Maximize2, X, Pencil, LayoutList,
+    DownloadIcon as Download // Renamed to avoid conflict if another Download is imported
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ensureAppConfigIsSaved, initDB, updateDataPoint, queueControlAction, getControlQueue, clearControlQueue } from '@/lib/db'; 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -54,7 +61,32 @@ import SLDWidget from "@/app/circuit/sld/SLDWidget"; // ADJUST PATH
 import { useDynamicDefaultDataPointIds } from '@/app/utils/defaultDataPoints'; // ADJUST PATH
 import PowerTimelineGraph, { TimeScale } from './PowerTimelineGraph'; 
 import PowerTimelineGraphConfigurator from './PowerTimelineGraphConfigurator';
-import { useAppStore, useCurrentUser, useIsEditMode } from '@/stores/appStore'; 
+import { useAppStore, useCurrentUser, useIsEditMode } from '@/stores/appStore';
+import { APP_NAME } from '@/config/appConfig';
+import { getOnboardingData, saveOnboardingData, clearOnboardingData } from '@/lib/idb-store';
+import { 
+    EXPECTED_BACKUP_SCHEMA_VERSION, 
+    APP_LOCAL_STORAGE_KEYS_TO_MANAGE_ON_IMPORT,
+    BackupFileContent
+} from '@/app/onboarding/import_all'; 
+import {
+    UploadIcon as Upload, ClipboardPasteIcon as ClipboardPaste
+} from 'lucide-react';
+import {
+    DropdownMenuSeparator,
+    DropdownMenuSub,
+    DropdownMenuSubContent,
+    DropdownMenuSubTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+    DialogDescription,
+    DialogFooter,
+    DialogHeader as DialogHeaderInternal, // Renamed to avoid clash
+    DialogTitle as DialogTitleInternal, // Renamed to avoid clash
+} from "@/components/ui/dialog"; // Dialog, DialogTrigger, DialogContent, DialogClose already imported
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+
 
 interface DashboardHeaderControlProps {
   plcStatus: "online" | "offline" | "disconnected"; isConnected: boolean; connectWebSocket: () => void;
@@ -64,24 +96,399 @@ interface DashboardHeaderControlProps {
   toggleEditMode: () => void;
   currentUserRole?: UserRole;
   onRemoveAll: () => void; onResetToDefault: () => void;
+  ws: React.MutableRefObject<WebSocket | null>; // WebSocket instance
+  logoutUser: () => void; // Logout function
 }
 
 const DashboardHeaderControl: React.FC<DashboardHeaderControlProps> = React.memo(
   ({
     plcStatus, isConnected, connectWebSocket, soundEnabled, setSoundEnabled, currentTime, delay,
     version, onOpenConfigurator, isEditMode, toggleEditMode, currentUserRole, onRemoveAll, onResetToDefault,
+    ws, logoutUser
   }) => {
-    const router = useRouter(); 
+  const router = useRouter();
     const currentPathname = usePathname();
     const headerTitle = currentPathname?.split('/').filter(Boolean).slice(-1)[0]?.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Dashboard';
     const isAdmin = currentUserRole === UserRole.ADMIN;
+
+  // Refs for file inputs
+  const importCurrentLayoutFileInputRef = useRef<HTMLInputElement>(null);
+  const importAllLayoutsFileInputRef = useRef<HTMLInputElement>(null);
+
+  // State for paste dialogs
+  const [isImportCurrentLayoutPasteDialogOpen, setIsImportCurrentLayoutPasteDialogOpen] = useState(false);
+  const [isImportAllLayoutsPasteDialogOpen, setIsImportAllLayoutsPasteDialogOpen] = useState(false);
+  const [pastedJsonContent, setPastedJsonContent] = useState("");
 
     const navigateToResetPage = () => {
       router.push('/reset');
     };
 
+  const readFileAsText = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = event => resolve(event.target?.result as string);
+      reader.onerror = error => reject(error);
+      reader.readAsText(file);
+    });
+  };
+
+  const saveJsonToFile = (data: any, filename: string) => {
+    try {
+      const jsonString = JSON.stringify(data, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success("Export Successful", { description: `${filename} downloaded.` });
+    } catch (error) {
+      console.error("Failed to save JSON to file:", error);
+      toast.error("Export Failed", { description: String(error) });
+    }
+  };
+
+  const exportCurrentLayout = () => {
+    if (currentUserRole !== UserRole.ADMIN) {
+      toast.warning("Access Denied", { description: "Only administrators can export layouts." });
+      return;
+    }
+    try {
+      const layoutData = localStorage.getItem(USER_DASHBOARD_CONFIG_KEY);
+      if (!layoutData) {
+        toast.info("No current layout to export.");
+        return;
+      }
+      const parsedLayout = JSON.parse(layoutData);
+      const exportData = {
+        layoutName: `current_layout_${PLANT_NAME.replace(/\s+/g, '_')}_${PAGE_SLUG}`,
+        timestamp: new Date().toISOString(),
+        data: parsedLayout,
+      };
+      saveJsonToFile(exportData, `control_dashboard_current_layout.json`);
+    } catch (error) {
+      console.error("Error exporting current layout:", error);
+      toast.error("Export Current Layout Failed", { description: String(error) });
+    }
+  };
+
+  const exportAllLayouts = async () => {
+    if (currentUserRole !== UserRole.ADMIN) {
+      toast.warning("Access Denied", { description: "Only administrators can export all layouts." });
+      return;
+    }
+    try {
+      toast.info("Preparing full backup export...", { duration: 2000 });
+      const currentDashboardLayout = localStorage.getItem(USER_DASHBOARD_CONFIG_KEY);
+
+      const localStorageData: Record<string, any> = {};
+      APP_LOCAL_STORAGE_KEYS_TO_MANAGE_ON_IMPORT.forEach(key => {
+        const item = localStorage.getItem(key);
+        if (item !== null) {
+          try { localStorageData[key] = JSON.parse(item); } catch { localStorageData[key] = item; }
+        }
+      });
+      // Add theme and react-flow keys
+      const theme = localStorage.getItem('theme');
+      if (theme) localStorageData['theme'] = theme;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('react-flow')) {
+          const item = localStorage.getItem(key);
+          if (item !== null) {
+            try { localStorageData[key] = JSON.parse(item); } catch { localStorageData[key] = item; }
+          }
+        }
+      }
+      
+      let onboardingDataResult;
+      try {
+        onboardingDataResult = await getOnboardingData();
+      } catch (idbError) {
+        console.error("Error fetching onboarding data from IDB:", idbError);
+        toast.error("IDB Data Error", { description: "Could not fetch onboarding data. It will be omitted." });
+      }
+
+      const backupData = {
+        backupSchemaVersion: EXPECTED_BACKUP_SCHEMA_VERSION,
+        createdAt: new Date().toISOString(),
+        application: { name: APP_NAME, version: VERSION },
+        plant: { name: PLANT_NAME, location: "", capacity: "" }, 
+        userSettings: {
+          dashboardLayout: currentDashboardLayout ? JSON.parse(currentDashboardLayout) : {},
+        },
+        browserStorage: {
+          indexedDB: {
+            onboardingData: onboardingDataResult || undefined,
+          },
+          localStorage: localStorageData,
+        },
+        sldLayouts: {}, // Mocked as per plan
+      };
+
+      saveJsonToFile(backupData, `full_backup_control_dashboard.json`);
+      toast.info("SLD Layouts Not Included", { description: "Exporting all SLD layouts is not supported in this version." });
+
+    } catch (error) {
+      console.error("Error exporting all layouts:", error);
+      toast.error("Export All Layouts Failed", { description: String(error) });
+    }
+  };
+
+  // --- Import Current Layout Functions ---
+  const handleImportCurrentLayoutFromFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (currentUserRole !== UserRole.ADMIN) {
+      toast.warning("Access Denied."); return;
+    }
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const fileContent = await readFileAsText(file);
+      const parsedJson = JSON.parse(fileContent);
+      
+      let layoutToSave;
+      // Check if it's the structured export or raw layout
+      if (parsedJson.data && parsedJson.layoutName) {
+        layoutToSave = parsedJson.data;
+      } else {
+        layoutToSave = parsedJson; // Assume it's the raw layout
+      }
+
+      if (typeof layoutToSave !== 'object' || layoutToSave === null) {
+        throw new Error("Invalid layout data format.");
+      }
+
+      localStorage.setItem(USER_DASHBOARD_CONFIG_KEY, JSON.stringify(layoutToSave));
+      toast.success("Current Layout Imported", { description: "Layout imported from file. Page will reload to apply changes." });
+      setTimeout(() => window.location.reload(), 2000);
+    } catch (error) {
+      console.error("Error importing current layout from file:", error);
+      toast.error("Import Failed", { description: String(error) });
+    } finally {
+        // Reset file input
+        if(importCurrentLayoutFileInputRef.current) importCurrentLayoutFileInputRef.current.value = "";
+    }
+  };
+
+  const handleImportCurrentLayoutFromPaste = () => {
+    if (currentUserRole !== UserRole.ADMIN) {
+      toast.warning("Access Denied."); return;
+    }
+    if (!pastedJsonContent.trim()) {
+      toast.warning("No content to import."); return;
+    }
+    try {
+      const parsedJson = JSON.parse(pastedJsonContent);
+      let layoutToSave;
+      if (parsedJson.data && parsedJson.layoutName) {
+        layoutToSave = parsedJson.data;
+      } else {
+        layoutToSave = parsedJson;
+      }
+
+      if (typeof layoutToSave !== 'object' || layoutToSave === null) {
+        throw new Error("Invalid layout data format.");
+      }
+
+      localStorage.setItem(USER_DASHBOARD_CONFIG_KEY, JSON.stringify(layoutToSave));
+      toast.success("Current Layout Imported", { description: "Layout imported from pasted text. Page will reload." });
+      setIsImportCurrentLayoutPasteDialogOpen(false);
+      setPastedJsonContent("");
+      setTimeout(() => window.location.reload(), 2000);
+    } catch (error) {
+      console.error("Error importing current layout from paste:", error);
+      toast.error("Import Failed", { description: String(error) });
+    }
+  };
+
+  // --- Import All Layouts (Restore) Functions ---
+  const handleFullRestore = async (parsedData: BackupFileContent, wsInstance: WebSocket | null, logoutFn: () => void) => {
+    if (currentUserRole !== UserRole.ADMIN) {
+      toast.warning("Access Denied."); return;
+    }
+    if (parsedData.backupSchemaVersion !== EXPECTED_BACKUP_SCHEMA_VERSION) {
+      toast.warning("Schema Version Mismatch", {
+        description: `File schema: ${parsedData.backupSchemaVersion}, Expected: ${EXPECTED_BACKUP_SCHEMA_VERSION}. Proceed with caution.`,
+      });
+    }
+
+    const importToastId = toast.loading("Full restore in progress...");
+
+    try {
+      // Clear existing data
+      APP_LOCAL_STORAGE_KEYS_TO_MANAGE_ON_IMPORT.forEach(key => localStorage.removeItem(key));
+      localStorage.removeItem('theme'); // Explicitly remove theme, will be restored if in backup
+      Object.keys(localStorage).forEach(key => { // Clear react-flow keys
+        if (key.startsWith('react-flow')) localStorage.removeItem(key);
+      });
+      await clearOnboardingData();
+      toast.info("Cleared local data.", { id: importToastId });
+
+      // Restore localStorage
+      if (parsedData.browserStorage.localStorage) {
+        for (const key in parsedData.browserStorage.localStorage) {
+          localStorage.setItem(key, JSON.stringify(parsedData.browserStorage.localStorage[key]));
+        }
+      }
+      toast.info("LocalStorage restored.", { id: importToastId });
+      
+      // Restore IndexedDB
+      if (parsedData.browserStorage.indexedDB?.onboardingData) {
+        await saveOnboardingData(parsedData.browserStorage.indexedDB.onboardingData as any); // Cast if type slightly differs
+        toast.info("Onboarding data (IDB) restored.", { id: importToastId });
+      } else {
+        toast.warning("No onboarding data in backup to restore.", { id: importToastId });
+      }
+
+      // Restore SLD Layouts
+      if (parsedData.sldLayouts && Object.keys(parsedData.sldLayouts).length > 0) {
+        if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
+          let sldSuccessCount = 0;
+          Object.values(parsedData.sldLayouts).forEach(layout => {
+            if (layout) {
+              wsInstance.send(JSON.stringify({ type: 'save-sld-widget-layout', payload: { key: `sld_${layout.layoutId}`, layout } }));
+              sldSuccessCount++;
+            }
+          });
+          toast.info(`Sent ${sldSuccessCount} SLD layouts for restoration.`, { id: importToastId });
+        } else {
+          toast.warning("SLD Restore Skipped", { description: "WebSocket not connected. SLD layouts could not be restored.", id: importToastId });
+        }
+      } else {
+        toast.info("No SLD layouts found in backup.", { id: importToastId });
+      }
+      
+      logoutFn(); // Perform logout
+      toast.success("Full Restore Successful!", {
+        id: importToastId,
+        description: "Application will now reload.",
+        duration: 4000,
+        onAutoClose: () => window.location.reload(),
+        onDismiss: () => window.location.reload(),
+      });
+
+    } catch (error) {
+      console.error("Full restore failed:", error);
+      toast.error("Full Restore Failed", { id: importToastId, description: String(error) });
+    }
+  };
+
+  const handleImportAllLayoutsFromFile = async (event: React.ChangeEvent<HTMLInputElement>, wsInstance: WebSocket | null, logoutFn: () => void) => {
+    if (currentUserRole !== UserRole.ADMIN) {
+      toast.warning("Access Denied."); return;
+    }
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const fileContent = await readFileAsText(file);
+      const parsedJson = JSON.parse(fileContent) as BackupFileContent;
+      await handleFullRestore(parsedJson, wsInstance, logoutFn);
+    } catch (error) {
+      console.error("Error importing all layouts from file:", error);
+      toast.error("Import Failed", { description: String(error) });
+    } finally {
+        if(importAllLayoutsFileInputRef.current) importAllLayoutsFileInputRef.current.value = "";
+    }
+  };
+
+  const handleImportAllLayoutsFromPaste = async (wsInstance: WebSocket | null, logoutFn: () => void) => {
+    if (currentUserRole !== UserRole.ADMIN) {
+      toast.warning("Access Denied."); return;
+    }
+    if (!pastedJsonContent.trim()) {
+      toast.warning("No content to import."); return;
+    }
+    try {
+      const parsedJson = JSON.parse(pastedJsonContent) as BackupFileContent;
+      await handleFullRestore(parsedJson, wsInstance, logoutFn);
+      setIsImportAllLayoutsPasteDialogOpen(false);
+      setPastedJsonContent("");
+    } catch (error) {
+      console.error("Error importing all layouts from paste:", error);
+      toast.error("Import Failed", { description: String(error) });
+    }
+  };
+
     return (
       <>
+      {/* Hidden File Inputs */}
+      <input
+        type="file"
+        accept=".json"
+        ref={importCurrentLayoutFileInputRef}
+        onChange={handleImportCurrentLayoutFromFile}
+        style={{ display: 'none' }}
+        disabled={currentUserRole !== UserRole.ADMIN}
+      />
+      <input
+        type="file"
+        accept=".json"
+        ref={importAllLayoutsFileInputRef}
+        onChange={(e) => handleImportAllLayoutsFromFile(e, ws.current, logoutUser)}
+        style={{ display: 'none' }}
+        disabled={currentUserRole !== UserRole.ADMIN}
+      />
+
+      {/* Paste Current Layout Dialog */}
+      <Dialog open={isImportCurrentLayoutPasteDialogOpen} onOpenChange={setIsImportCurrentLayoutPasteDialogOpen}>
+        <DialogContent>
+          <DialogHeaderInternal>
+            <DialogTitleInternal>Import Current Layout from Text</DialogTitleInternal>
+            <DialogDescription>
+              Paste the JSON content for the dashboard layout below.
+            </DialogDescription>
+          </DialogHeaderInternal>
+          <div className="grid gap-4 py-4">
+            <Label htmlFor="current-layout-paste-area">JSON Content</Label>
+            <Textarea
+              id="current-layout-paste-area"
+              value={pastedJsonContent}
+              onChange={(e) => setPastedJsonContent(e.target.value)}
+              placeholder='{ "data": { ... } } OR { "item1": { ... } }'
+              rows={10}
+              disabled={currentUserRole !== UserRole.ADMIN}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsImportCurrentLayoutPasteDialogOpen(false); setPastedJsonContent(""); }}>Cancel</Button>
+            <Button onClick={handleImportCurrentLayoutFromPaste} disabled={currentUserRole !== UserRole.ADMIN}>Import Layout</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Paste All Layouts (Restore) Dialog */}
+      <Dialog open={isImportAllLayoutsPasteDialogOpen} onOpenChange={setIsImportAllLayoutsPasteDialogOpen}>
+        <DialogContent>
+          <DialogHeaderInternal>
+            <DialogTitleInternal>Import All Layouts (Restore) from Text</DialogTitleInternal>
+            <DialogDescription>
+              Paste the full backup JSON content below. This will overwrite existing settings.
+            </DialogDescription>
+          </DialogHeaderInternal>
+          <div className="grid gap-4 py-4">
+            <Label htmlFor="all-layouts-paste-area">Backup JSON Content</Label>
+            <Textarea
+              id="all-layouts-paste-area"
+              value={pastedJsonContent}
+              onChange={(e) => setPastedJsonContent(e.target.value)}
+              placeholder='{ "backupSchemaVersion": "...", ... }'
+              rows={15}
+              disabled={currentUserRole !== UserRole.ADMIN}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsImportAllLayoutsPasteDialogOpen(false); setPastedJsonContent(""); }}>Cancel</Button>
+            <Button onClick={() => handleImportAllLayoutsFromPaste(ws.current, logoutUser)} disabled={currentUserRole !== UserRole.ADMIN} variant="destructive">Import & Overwrite</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
         <motion.div
           className="flex flex-col sm:flex-row justify-between items-center mb-2 md:mb-4 gap-4 pt-3"
           initial={{ opacity: 0, y: -20 }}
@@ -106,6 +513,81 @@ const DashboardHeaderControl: React.FC<DashboardHeaderControlProps> = React.memo
                     <span className="sm:hidden">Edit</span>
                   </Button>
                 </motion.div>
+                {/* Import Dropdown */}
+                <motion.div variants={itemVariants}>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="icon" title="Import Data" disabled={currentUserRole !== UserRole.ADMIN}>
+                        <Upload className="h-5 w-5" />
+                        <span className="sr-only">Import Data</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuSub>
+                        <DropdownMenuSubTrigger disabled={currentUserRole !== UserRole.ADMIN}>
+                           Import Current Layout
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent>
+                          <DropdownMenuItem
+                            disabled={currentUserRole !== UserRole.ADMIN}
+                            onClick={() => importCurrentLayoutFileInputRef.current?.click()}
+                          >
+                            <Upload className="mr-2 h-4 w-4" /> From File
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={currentUserRole !== UserRole.ADMIN}
+                            onClick={() => { setPastedJsonContent(""); setIsImportCurrentLayoutPasteDialogOpen(true);}}
+                          >
+                            <ClipboardPaste className="mr-2 h-4 w-4" /> From Text
+                          </DropdownMenuItem>
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuSub>
+                        <DropdownMenuSubTrigger disabled={currentUserRole !== UserRole.ADMIN} className="text-destructive hover:!text-destructive focus:!text-destructive">
+                           Import All (Restore Backup)
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent>
+                          <DropdownMenuItem
+                            disabled={currentUserRole !== UserRole.ADMIN}
+                            onClick={() => importAllLayoutsFileInputRef.current?.click()}
+                            className="text-destructive hover:!text-destructive focus:!text-destructive"
+                          >
+                            <Upload className="mr-2 h-4 w-4" /> From File
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={currentUserRole !== UserRole.ADMIN}
+                            onClick={() => { setPastedJsonContent(""); setIsImportAllLayoutsPasteDialogOpen(true);}}
+                            className="text-destructive hover:!text-destructive focus:!text-destructive"
+                          >
+                            <ClipboardPaste className="mr-2 h-4 w-4" /> From Text
+                          </DropdownMenuItem>
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </motion.div>
+                {/* End Import Dropdown */}
+                {/* Export Dropdown */}
+                <motion.div variants={itemVariants}>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="icon" title="Export Data" disabled={currentUserRole !== UserRole.ADMIN}>
+                        <Download className="h-5 w-5" />
+                        <span className="sr-only">Export Data</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={exportCurrentLayout} disabled={currentUserRole !== UserRole.ADMIN}>
+                        Export Current Layout
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={exportAllLayouts} disabled={currentUserRole !== UserRole.ADMIN}>
+                        Export All Layouts (Backup)
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </motion.div>
+                {/* End Export Dropdown */}
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <motion.div variants={itemVariants}>
@@ -252,9 +734,11 @@ const DashboardHeaderControl: React.FC<DashboardHeaderControlProps> = React.memo
     );
   });
 
-interface HeaderConnectivityComponentProps extends DashboardHeaderControlProps { }
+interface HeaderConnectivityComponentProps extends DashboardHeaderControlProps {
+  // ws and logoutUser are already in DashboardHeaderControlProps
+}
 const HeaderConnectivityComponent: React.FC<HeaderConnectivityComponentProps> = (props) => {
-  return <DashboardHeaderControl {...props} />;
+  return <DashboardHeaderControl {...props} />; // Pass all props down
 };
 
 
@@ -304,6 +788,7 @@ const UnifiedDashboardPage: React.FC = () => {
   const router = useRouter();
   const currentPath = usePathname();
   const currentUser = useCurrentUser();
+  const logoutUser = useAppStore((state) => state.logout); // Get logoutUser here
   const storeHasHydrated = useAppStore.persist.hasHydrated();
   const [authCheckComplete, setAuthCheckComplete] = useState(false);
   
@@ -312,7 +797,7 @@ const UnifiedDashboardPage: React.FC = () => {
     toggleEditMode: state.toggleEditMode,
   }));
 
-  useEffect(() => { /* ... initDB ... */ 
+  useEffect(() => { /* ... initDB ... */
     initDB().catch(console.error); ensureAppConfigIsSaved();
   }, []); 
 
@@ -578,11 +1063,14 @@ const sldInternalMaxHeight = `calc(70vh - 3.5rem)`;
           plcStatus={plcStatus} isConnected={isConnected} connectWebSocket={connectWebSocket}
           soundEnabled={soundEnabled} setSoundEnabled={setSoundEnabled} currentTime={currentTime} delay={delay}
           version={VERSION}
-          isEditMode={isGlobalEditMode} 
+          isEditMode={isGlobalEditMode}
           toggleEditMode={toggleEditModeAction}
           currentUserRole={currentUserRole}
           onOpenConfigurator={() => { if (currentUserRole === UserRole.ADMIN) setIsConfiguratorOpen(true); else toast.warning("Access Denied", { description: "Only administrators can add cards." }); }}
-          onRemoveAll={handleRemoveAllItems} onResetToDefault={handleResetToDefault} />
+          onRemoveAll={handleRemoveAllItems} onResetToDefault={handleResetToDefault}
+          ws={ws} // Pass WebSocket ref
+          logoutUser={logoutUser} // Pass logout function
+        />
 
         {topSections.length > 0 && (<RenderingComponent sections={topSections} {...commonRenderingProps} />)}
 
