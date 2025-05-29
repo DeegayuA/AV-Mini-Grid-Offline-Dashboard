@@ -322,6 +322,145 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
     const addDataLink = useCallback(() => setDataLinks(prev => [...prev, { dataPointId: '', targetProperty: '', valueMapping: { type: 'exact', mapping: [], defaultValue: '{passthrough_value}' }, format: { type: 'string' } }]), []);
     const removeDataLink = useCallback((index: number) => setDataLinks(prev => prev.filter((_, i) => i !== index)), []);
 
+    // --- ValueMappingCard specific handlers ---
+    const handleChangeMappingType = useCallback((linkIndex: number, newType: NonNullable<DataPointLink['valueMapping']>['type'] | undefined) => {
+        setDataLinks(prevLinks => prevLinks.map((link, i) => {
+            if (i === linkIndex) {
+                const currentVMType = link.valueMapping?.type; // Safe access
+                const currentMapping = link.valueMapping?.mapping || [];
+    
+                if (newType === undefined) return { ...link, valueMapping: undefined }; // Clears the valueMapping
+                
+                let newMappingEntries = currentMapping;
+                if (newType === 'boolean' && currentVMType !== 'boolean') {
+                    newMappingEntries = [{ value: '' }, { value: '' }]; // Default for boolean if switching to boolean
+                } else if (newType !== 'boolean' && currentVMType === 'boolean') {
+                    newMappingEntries = []; // Clear boolean defaults if switching away
+                } else if (newType === 'exact' && currentVMType !== 'exact') {
+                    newMappingEntries = []; // Clear previous entries if switching to exact (usually starts fresh)
+                } else if (newType === 'range' && currentVMType !== 'range') {
+                    newMappingEntries = []; // Clear previous entries if switching to range
+                }
+                // For threshold, typically one entry, but can retain if user wants to adjust
+                // For exact, usually one entry is added at a time by user.
+
+                return { 
+                    ...link, 
+                    valueMapping: { 
+                        ...(link.valueMapping || {}), // Preserve other potential fields like defaultValue
+                        type: newType, 
+                        mapping: newMappingEntries 
+                    } 
+                };
+            }
+            return link;
+        }));
+    }, [setDataLinks]);
+
+    const handleChangeMappingEntry = useCallback((linkIndex: number, mapIndex: number, field: string, value: any) => {
+        setDataLinks(prevLinks => prevLinks.map((link, i) => {
+            if (i === linkIndex && link.valueMapping) {
+                const newMappingEntries = [...link.valueMapping.mapping];
+                let processedValue = value;
+                if (field === 'min' || field === 'max' || field === 'threshold') {
+                    processedValue = value === '' ? undefined : parseFloat(value);
+                    if (isNaN(processedValue as number)) { 
+                        processedValue = undefined; 
+                    }
+                }
+                newMappingEntries[mapIndex] = { ...newMappingEntries[mapIndex], [field]: processedValue };
+                return { ...link, valueMapping: { ...link.valueMapping, mapping: newMappingEntries } };
+            }
+            return link;
+        }));
+    }, [setDataLinks]);
+
+    const handleAddMappingEntry = useCallback((linkIndex: number) => {
+        setDataLinks(prevLinks => prevLinks.map((link, i) => {
+            if (i === linkIndex) {
+                const currentVM = link.valueMapping || { type: 'exact', mapping: [] };
+                let newEntry: any; 
+                if (currentVM.type === 'range') {
+                    newEntry = { min: undefined, max: undefined, value: '' };
+                } else if (currentVM.type === 'threshold') {
+                    newEntry = { threshold: undefined, value: '' };
+                } else { 
+                    newEntry = { match: '', value: '' };
+                }
+                return { 
+                    ...link, 
+                    valueMapping: { 
+                        ...currentVM, 
+                        mapping: [...currentVM.mapping, newEntry] 
+                    } 
+                };
+            }
+            return link;
+        }));
+    }, [setDataLinks]);
+    
+    const handleRemoveMappingEntry = useCallback((linkIndex: number, mapIndex: number) => {
+        setDataLinks(prevLinks => prevLinks.map((link, i) => {
+            if (i === linkIndex && link.valueMapping) {
+                const newMappingEntries = link.valueMapping.mapping.filter((_, idx) => idx !== mapIndex);
+                return { ...link, valueMapping: { ...link.valueMapping, mapping: newMappingEntries } };
+            }
+            return link;
+        }));
+    }, [setDataLinks]);
+
+    const handleChangeDefaultValue = useCallback((linkIndex: number, defaultValue: any) => {
+        setDataLinks(prevLinks => prevLinks.map((link, i) => {
+            if (i === linkIndex) {
+                const currentVM = link.valueMapping || { type: 'exact', mapping: [] }; // Ensure valueMapping exists
+                return { ...link, valueMapping: { ...currentVM, defaultValue: defaultValue } };
+            }
+            return link;
+        }));
+    }, [setDataLinks]);
+    // --- End ValueMappingCard specific handlers ---
+
+    // --- DisplayFormatCard specific handler ---
+    const handleChangeFormatField = useCallback((linkIndex: number, field: keyof NonNullable<DataPointLink['format']>, value: any) => {
+        setDataLinks(prevLinks => prevLinks.map((link, i) => {
+            if (i === linkIndex) {
+                const currentFormat = link.format || { type: 'string' };
+                let processedValue = value;
+    
+                if (field === 'precision') {
+                    if (value === '' || value === null) {
+                        processedValue = undefined;
+                    } else {
+                        const numValue = parseInt(String(value), 10);
+                        processedValue = isNaN(numValue) ? undefined : numValue;
+                    }
+                }
+                
+                const newFormat = { ...currentFormat, [field]: processedValue };
+    
+                if (!newFormat.type) {
+                    const dp = dataPoints[link.dataPointId];
+                    if (dp) {
+                        if (['Float', 'Double', 'Int16', 'Int32', 'UInt16', 'UInt32', 'Byte', 'SByte', 'Int64', 'UInt64'].includes(dp.dataType)) newFormat.type = 'number';
+                        else if (dp.dataType === 'Boolean') newFormat.type = 'boolean';
+                        else if (dp.dataType === 'DateTime') newFormat.type = 'dateTime';
+                        else newFormat.type = 'string';
+                    } else {
+                        newFormat.type = 'string';
+                    }
+                }
+                
+                if (newFormat.type !== 'number' || newFormat.precision === undefined) {
+                    delete newFormat.precision;
+                }
+    
+                return { ...link, format: newFormat };
+            }
+            return link;
+        }));
+    }, [dataPoints, setDataLinks]);
+    // --- End DisplayFormatCard specific handler ---
+
     const handleAddMultipleLinks = () => {
         if (!quickLinkDataPointId || quickLinkTargetProperties.length === 0) return;
     
@@ -674,15 +813,20 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
                                                     </Button>
                                                 </CollapsibleTrigger>
                                                 <CollapsibleContent className="pt-3 space-y-4">
-                                                    <ValueMappingCard 
+                                                    <ValueMappingCard
                                                         valueMapping={link.valueMapping}
-                                                        onUpdate={(updatedMapping: any) => handleDataLinkChange(index, 'valueMapping', updatedMapping)}
                                                         dataPointId={link.dataPointId}
+                                                        onChangeMappingType={(newType) => handleChangeMappingType(index, newType)}
+                                                        onChangeMappingEntry={(mapIdx, field, val) => handleChangeMappingEntry(index, mapIdx, field, val)}
+                                                        onAddMappingEntry={() => handleAddMappingEntry(index)}
+                                                        onRemoveMappingEntry={(mapIdx) => handleRemoveMappingEntry(index, mapIdx)}
+                                                        onChangeDefaultValue={(defVal) => handleChangeDefaultValue(index, defVal)}
                                                     />
-                                                    <DisplayFormatCard 
-                                                        format={link.format} 
-                                                        onUpdate={(updatedFormat: any) => handleDataLinkChange(index, 'format', updatedFormat)}
+                                                    <DisplayFormatCard
+                                                        format={link.format}
                                                         dataPointId={link.dataPointId}
+                                                        dataPoints={dataPoints} 
+                                                        onChangeFormat={(field, value) => handleChangeFormatField(index, field, value)}
                                                     />
                                                 </CollapsibleContent>
                                             </Collapsible>

@@ -3,7 +3,7 @@ import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position, Node } from 'reactflow'; // Added Node type
 import { motion } from 'framer-motion';
 import { GeneratorNodeData, CustomNodeType, DataPointLink, DataPoint } from '@/types/sld'; // Added CustomNodeType
-import { useAppStore } from '@/stores/appStore';
+import { useAppStore, useOpcUaNodeValue } from '@/stores/appStore'; // Added useOpcUaNodeValue
 import { getDataPointValue, applyValueMapping, formatDisplayValue, getDerivedStyle } from './nodeUtils';
 import { ZapIcon, CheckCircleIcon, AlertTriangleIcon, XCircleIcon, CogIcon, PowerIcon, InfoIcon } from 'lucide-react'; // Added InfoIcon
 import { Button } from "@/components/ui/button"; // Added Button
@@ -25,27 +25,47 @@ const GeneratorNode: React.FC<NodeProps<GeneratorNodeData> & Pick<Node<Generator
     [isEditMode, currentUser]
   );
 
+  // --- Reactive OPC-UA Values for Styling and Display ---
+  const statusLink = useMemo(() => data.dataPointLinks?.find(link => link.targetProperty === 'status'), [data.dataPointLinks]);
+  const statusDataPointConfig = useMemo(() => statusLink ? dataPoints[statusLink.dataPointId] : undefined, [statusLink, dataPoints]);
+  const statusOpcUaNodeId = useMemo(() => statusDataPointConfig?.nodeId, [statusDataPointConfig]);
+  const reactiveStatusValue = useOpcUaNodeValue(statusOpcUaNodeId);
+
+  const powerLink = useMemo(() => data.dataPointLinks?.find(link => link.targetProperty === 'powerOutput' || link.targetProperty === 'activePower'), [data.dataPointLinks]);
+  const powerDataPointConfig = useMemo(() => powerLink ? dataPoints[powerLink.dataPointId] : undefined, [powerLink, dataPoints]);
+  const powerOpcUaNodeId = useMemo(() => powerDataPointConfig?.nodeId, [powerDataPointConfig]);
+  const reactivePowerValue = useOpcUaNodeValue(powerOpcUaNodeId);
+
   const processedStatus = useMemo(() => {
-    const statusLink = data.dataPointLinks?.find(link => link.targetProperty === 'status');
-    if (statusLink && dataPoints && dataPoints[statusLink.dataPointId] && opcUaNodeValues) { // Added dataPoints and opcUaNodeValues checks
-      const rawValue = getDataPointValue(statusLink.dataPointId, opcUaNodeValues, dataPoints); // Pass all three
-      return applyValueMapping(rawValue, statusLink);
+    if (statusLink && reactiveStatusValue !== undefined) {
+      // The original getDataPointValue call was: getDataPointValue(statusLink.dataPointId, opcUaNodeValues, dataPoints)
+      // It's now replaced by reactiveStatusValue. If direct call needed, it would be (statusLink.dataPointId, dataPoints, opcUaNodeValues)
+      return applyValueMapping(reactiveStatusValue, statusLink);
     }
     return data.status || 'offline'; // Default status
-  }, [data.dataPointLinks, data.status, opcUaNodeValues, dataPoints]);
+  }, [statusLink, reactiveStatusValue, data.status]);
 
   const powerOutput = useMemo(() => {
-    const powerLink = data.dataPointLinks?.find(
-      link => link.targetProperty === 'powerOutput' || link.targetProperty === 'activePower'
-    );
-    if (powerLink && dataPoints && dataPoints[powerLink.dataPointId] && opcUaNodeValues) { // Added dataPoints and opcUaNodeValues checks
-      const dpMeta = dataPoints[powerLink.dataPointId];
-      const rawValue = getDataPointValue(powerLink.dataPointId, opcUaNodeValues, dataPoints); // Pass all three
-      const mappedValue = applyValueMapping(rawValue, powerLink);
+    if (powerLink && reactivePowerValue !== undefined) {
+      // The original getDataPointValue call was: getDataPointValue(powerLink.dataPointId, opcUaNodeValues, dataPoints)
+      // It's now replaced by reactivePowerValue. If direct call needed, it would be (powerLink.dataPointId, dataPoints, opcUaNodeValues)
+      const dpMeta = dataPoints[powerLink.dataPointId]; // dpMeta still needed for formatDisplayValue
+      const mappedValue = applyValueMapping(reactivePowerValue, powerLink);
       return formatDisplayValue(mappedValue, powerLink.format, dpMeta?.dataType);
     }
     return data.config?.ratingKVA ? `${data.config.ratingKVA} kVA (rated)` : 'N/A';
-  }, [data.dataPointLinks, data.config?.ratingKVA, opcUaNodeValues, dataPoints]);
+  }, [powerLink, reactivePowerValue, dataPoints, data.config?.ratingKVA]);
+  
+  const opcUaValuesForDerivedStyle = useMemo(() => {
+      const values: Record<string, string | number | boolean> = {};
+      if (statusOpcUaNodeId && reactiveStatusValue !== undefined) {
+          values[statusOpcUaNodeId] = reactiveStatusValue;
+      }
+      if (powerOpcUaNodeId && reactivePowerValue !== undefined) {
+          values[powerOpcUaNodeId] = reactivePowerValue;
+      }
+      return values;
+  }, [statusOpcUaNodeId, reactiveStatusValue, powerOpcUaNodeId, reactivePowerValue]);
 
   interface StatusInfo {
     StatusIcon: typeof CogIcon;
@@ -90,8 +110,8 @@ const GeneratorNode: React.FC<NodeProps<GeneratorNodeData> & Pick<Node<Generator
   }, [processedStatus]);
   
   const derivedNodeStyles = useMemo(() => 
-    getDerivedStyle(data, opcUaNodeValues, dataPoints), // Changed realtimeData to opcUaNodeValues
-    [data, opcUaNodeValues, dataPoints]
+    getDerivedStyle(data, dataPoints, opcUaValuesForDerivedStyle, opcUaNodeValues),
+    [data, dataPoints, opcUaValuesForDerivedStyle, opcUaNodeValues]
   );
 
   // Generator Symbol SVG (Circle with 'G' or Sine Wave)

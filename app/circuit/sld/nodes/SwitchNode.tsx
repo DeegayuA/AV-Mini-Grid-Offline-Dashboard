@@ -12,7 +12,7 @@ import { toast } from 'sonner'; // Added toast
 // SwitchNodeData is defined in types/sld.ts (assuming it extends BaseNodeData)
 
 const SwitchNode: React.FC<NodeProps<SwitchNodeData>> = (props) => {
-  const { data, selected, isConnectable, id, type, xPos, yPos, zIndex, dragging, width, height } = props;
+  const { data, selected, isConnectable, id, type, xPos, yPos, zIndex, dragging } = props;
 
   const { 
     isEditMode, 

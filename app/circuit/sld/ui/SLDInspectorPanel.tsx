@@ -308,47 +308,40 @@ const SLDInspectorPanel: React.FC<SLDInspectorPanelProps> = ({
     let updatedElement: CustomNodeType | CustomFlowEdge; // Use the union type
 
     if (isNode(selectedElement)) {
-        // --- Construct Node Data ---
-        // Start with essential node properties from the original element
-        const baseNodeData: Partial<CustomNodeData> = {
-            elementType: selectedElement.data.elementType, // Keep original type
-            label: selectedElement.data.label, // Keep original label (formData might overwrite)
+        const currentElementData = selectedElement.data;
+
+        const updatedPropertiesFromForm: Partial<CustomNodeData> = {
+            label: formData.label,
+            config: formData.config,
+            isDrillable: formData.isDrillable,
+            subLayoutId: formData.subLayoutId,
+            notes: formData.notes, 
+            assetId: formData.assetId, 
+            dataPointLinks: validDataLinks.length > 0 ? validDataLinks : undefined,
         };
 
-        // Merge with formData, ensuring properties match CustomNodeData structure
-        const nodeFormData: Partial<CustomNodeData> = {
-           label: formData.label,
-           config: formData.config, // Assumes config is part of CustomNodeData
-           isDrillable: formData.isDrillable, // Add other relevant node fields from formData
-           subLayoutId: formData.subLayoutId,
-           text: formData.elementType === SLDElementType.TextLabel ? formData.text : undefined, // Specific for TextLabel
-           // Add other specific node data fields here from formData based on elementType if needed
-        };
+        if (currentElementData.elementType === SLDElementType.TextLabel && formData.elementType === SLDElementType.TextLabel) {
+            (updatedPropertiesFromForm as Partial<TextLabelNodeData>).text = formData.text;
+            // Assuming styleConfig is handled elsewhere or not part of this panel's direct formData
+        }
 
-        // Create the final data object for the node
-        let finalNodeData = {
-            ...baseNodeData,
-            ...nodeFormData,
-            elementType: baseNodeData.elementType!, // Ensure elementType is non-null (it must exist for a node)
-            dataPointLinks: validDataLinks,
-            // Ensure required fields have defaults if not provided by formData or base
-            label: nodeFormData.label ?? baseNodeData.label ?? '', // Example default
-        } as unknown as CustomNodeData;
+        const finalNodeData = { // Let TypeScript infer the type first
+            ...currentElementData,
+            ...updatedPropertiesFromForm,
+            elementType: currentElementData.elementType, 
+            label: updatedPropertiesFromForm.label ?? currentElementData.label ?? '',
+        } as CustomNodeData; // Then assert it to CustomNodeData
 
-        // Clean up potentially empty config
         if (finalNodeData.config && Object.keys(finalNodeData.config).length === 0) {
            delete finalNodeData.config;
         }
-        // Clean up potentially undefined text if not a text label
-        if (finalNodeData.elementType !== SLDElementType.TextLabel) {
-            delete (finalNodeData as any).text; // Remove text if not applicable
+        if (finalNodeData.elementType !== SLDElementType.TextLabel && 'text' in finalNodeData) {
+           delete (finalNodeData as any).text;
         }
-        // Add more cleanup specific to node types if needed
-
 
         updatedElement = {
-          ...selectedElement, // Spread the original node properties (id, position, etc.)
-          data: finalNodeData as any, // Assign the validated node data (use 'as any' if TS still struggles with the exact union subtype)
+          ...selectedElement,
+          data: finalNodeData, 
         };
 
     } else if (isEdge(selectedElement)) {

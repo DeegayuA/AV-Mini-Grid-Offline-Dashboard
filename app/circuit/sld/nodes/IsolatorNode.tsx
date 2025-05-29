@@ -13,9 +13,9 @@ import { toast } from 'sonner'; // Added toast
 // NodeProps<IsolatorNodeData> can be used directly.
 
 const IsolatorNode: React.FC<NodeProps<IsolatorNodeData>> = (props) => { // Using NodeProps<IsolatorNodeData>
-  const { data, selected, isConnectable, id, type, zIndex, dragging, position, xPos, yPos } = props;
-  const xPosition = xPos ?? position?.x ?? 0;
-  const yPosition = yPos ?? position?.y ?? 0;
+  const { data, selected, isConnectable, id, type, zIndex, dragging, xPos, yPos } = props;
+  const xPosition = xPos ?? 0;
+  const yPosition = yPos ?? 0;
   
   const { 
     isEditMode, 

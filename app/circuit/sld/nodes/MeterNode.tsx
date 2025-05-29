@@ -9,12 +9,13 @@ import { GaugeIcon, AlertTriangleIcon, CheckCircleIcon, TerminalSquareIcon, Info
 import { Button } from "@/components/ui/button"; // Added Button
 
 const MeterNode: React.FC<NodeProps<MeterNodeData>> = (props) => { // Reverted to NodeProps
-  const { data, selected, isConnectable, id, type, zIndex, dragging } = props; // Adjusted destructuring
-  const { isEditMode, currentUser, dataPoints, setSelectedElementForDetails } = useAppStore(state => ({
+  const { data, selected, isConnectable, id, type, zIndex, dragging, xPos, yPos } = props; // Added xPos, yPos
+  const { isEditMode, currentUser, dataPoints, globalOpcUaNodeValues, setSelectedElementForDetails } = useAppStore(state => ({ // Added globalOpcUaNodeValues
     isEditMode: state.isEditMode,
     currentUser: state.currentUser,
     setSelectedElementForDetails: state.setSelectedElementForDetails,
     dataPoints: state.dataPoints,
+    globalOpcUaNodeValues: state.opcUaNodeValues, // Added mapping for globalOpcUaNodeValues
   }));
 
   const isNodeEditable = useMemo(() =>
@@ -116,8 +117,8 @@ const MeterNode: React.FC<NodeProps<MeterNodeData>> = (props) => { // Reverted t
   ]);
 
   const derivedNodeStyles = useMemo(() => {
-    return getDerivedStyle(data, opcUaValuesForDerivedStyle, dataPoints);
-  }, [data, opcUaValuesForDerivedStyle, dataPoints]);
+    return getDerivedStyle(data, dataPoints, opcUaValuesForDerivedStyle, globalOpcUaNodeValues);
+  }, [data, dataPoints, opcUaValuesForDerivedStyle, globalOpcUaNodeValues]);
 
   const StatusIcon = useMemo(() => {
     if (processedStatus === 'fault' || processedStatus === 'alarm') return AlertTriangleIcon;
@@ -160,7 +161,7 @@ const MeterNode: React.FC<NodeProps<MeterNodeData>> = (props) => { // Reverted t
             const fullNodeObject: CustomNodeType = {
                 id, 
                 type, 
-                position: { x: 0, y: 0 }, // Default position as it's not available in props
+                position: { x: xPos ?? 0, y: yPos ?? 0 }, // Used xPos and yPos
                 data, 
                 selected, 
                 dragging, 

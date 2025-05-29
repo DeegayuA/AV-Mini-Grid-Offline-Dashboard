@@ -80,7 +80,7 @@ export default function AnimatedFlowEdge({
   // Status Link (Faults, Warnings, Energized state) - highest priority for color and some animation
   const statusLink = data?.dataPointLinks?.find(link => ['status', 'isEnergized'].includes(link.targetProperty));
   if (statusLink && opcUaNodeValues && dataPoints) { // Added opcUaNodeValues and dataPoints checks
-    const rawStatusValue = getDataPointValue(statusLink.dataPointId, opcUaNodeValues, dataPoints); // Updated call
+    const rawStatusValue = getDataPointValue(statusLink.dataPointId, dataPoints, opcUaNodeValues); // Updated call
     const mappedStatusValue = statusLink.valueMapping ? applyValueMapping(rawStatusValue, statusLink) : rawStatusValue;
     
     if (statusLink.targetProperty === 'isEnergized') {
@@ -113,7 +113,7 @@ export default function AnimatedFlowEdge({
   // Flow Direction Link (overrides static if present, but not if faultPulse is active)
   const flowLink = data?.dataPointLinks?.find(link => link.targetProperty === 'flowDirection');
   if (flowLink && animationName !== 'faultPulse' && opcUaNodeValues && dataPoints) { // Added opcUaNodeValues and dataPoints checks
-    const rawFlowValue = getDataPointValue(flowLink.dataPointId, opcUaNodeValues, dataPoints); // Updated call
+    const rawFlowValue = getDataPointValue(flowLink.dataPointId, dataPoints, opcUaNodeValues); // Updated call
     // Note: applyValueMapping needs to handle numeric passthrough if mapping not matched
     const mappedFlowState = flowLink.valueMapping ? applyValueMapping(rawFlowValue, flowLink) : rawFlowValue;
 
@@ -142,7 +142,7 @@ export default function AnimatedFlowEdge({
   let currentSpeedFactor = typeof data?.currentLoad === 'number' ? data.currentLoad / 100 : 0; // 0-1 if currentLoad is %
   const speedLink = data?.dataPointLinks?.find(link => ['animationSpeedFactor', 'currentLoadPercent'].includes(link.targetProperty));
   if (speedLink && opcUaNodeValues && dataPoints) { // Added opcUaNodeValues and dataPoints checks
-    const rawSpeedValue = getDataPointValue(speedLink.dataPointId, opcUaNodeValues, dataPoints); // Updated call
+    const rawSpeedValue = getDataPointValue(speedLink.dataPointId, dataPoints, opcUaNodeValues); // Updated call
     const mappedSpeed = speedLink.valueMapping ? applyValueMapping(rawSpeedValue, speedLink) : rawSpeedValue;
     if (typeof mappedSpeed === 'number' && mappedSpeed > 0) {
       // If animationSpeedFactor, it's a multiplier. If currentLoadPercent, it's 0-100.

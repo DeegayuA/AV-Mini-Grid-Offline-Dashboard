@@ -55,6 +55,31 @@ export interface DataPointLink {
   };
 }
 
+export interface CTNodeData extends BaseNodeData {
+  elementType: SLDElementType.CT;
+  config?: BaseNodeData['config'] & {
+    ratioPrimary?: number;
+    ratioSecondary?: number;
+    accuracyClass?: string;
+  };
+}
+
+export interface PTNodeData extends BaseNodeData {
+  elementType: SLDElementType.PT;
+  config?: BaseNodeData['config'] & {
+    ratioPrimary?: number;
+    ratioSecondary?: number;
+    accuracyClass?: string;
+  };
+}
+
+export interface SwitchNodeData extends BaseNodeData {
+  elementType: SLDElementType.Switch;
+  config?: BaseNodeData['config'] & {
+    normallyOpen?: boolean; // Example specific config, can be expanded later
+  };
+}
+
 // --- Base Node Data (Common to all custom nodes) ---
 export interface BaseNodeData {
   label: string;
@@ -222,12 +247,28 @@ export interface IsolatorNodeData extends BaseNodeData {
 }
 
 export interface ATSNodeData extends BaseNodeData {
-    elementType: SLDElementType.ATS;
-    config?: BaseNodeData['config'] & {
-        transferTimeMs?: number;
-        numPoles?: number;
-        controlNodeId?: string; // <-- Added
-    };
+  elementType: SLDElementType.ATS;
+  config?: BaseNodeData['config'] & {
+    transferTimeMs?: number;
+    numPoles?: number;
+  };
+}
+
+export interface MotorNodeData extends BaseNodeData {
+  elementType: SLDElementType.Motor;
+  config?: BaseNodeData['config'] & {
+    ratedPowerkW?: number;
+    voltage?: string;
+    phase?: 1 | 3;
+  };
+}
+
+export interface RelayNodeData extends BaseNodeData {
+  elementType: SLDElementType.Relay;
+  config?: BaseNodeData['config'] & {
+    coilVoltage?: string;
+    isNormallyOpen?: boolean;
+  };
 }
 
 export interface JunctionBoxNodeData extends BaseNodeData {
@@ -266,7 +307,8 @@ export type CustomNodeData =
   | BreakerNodeData | MeterNodeData | BatteryNodeData | ContactorNodeData
   | GridNodeData | LoadNodeData | BusbarNodeData | GenericDeviceNodeData
   | TransformerNodeData | GeneratorNodeData | PLCNodeData | SensorNodeData
-  | IsolatorNodeData | ATSNodeData | JunctionBoxNodeData | FuseNodeData | GaugeNodeData;
+  | IsolatorNodeData | ATSNodeData | JunctionBoxNodeData | FuseNodeData | GaugeNodeData
+  | SwitchNodeData | CTNodeData | PTNodeData | MotorNodeData | RelayNodeData; // Added Motor, Relay
 
 
 // --- Edge Data ---

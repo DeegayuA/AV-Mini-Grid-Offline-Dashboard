@@ -4,7 +4,7 @@ import { NodeProps, Handle, Position } from 'reactflow'; // Reverted to NodeProp
 import { motion } from 'framer-motion';
 // Added CustomNodeData to the import line
 import { BaseNodeData, CustomNodeType, CustomNodeData, DataPointLink, DataPoint, SLDElementType } from '@/types/sld'; // Added CustomNodeType, SLDElementType and CustomNodeData
-import { useAppStore } from '@/stores/appStore';
+import { useAppStore, useOpcUaNodeValue } from '@/stores/appStore'; // Added useOpcUaNodeValue
 import { getDataPointValue, applyValueMapping, formatDisplayValue, getDerivedStyle } from './nodeUtils';
 import { CogIcon, PlayCircleIcon, PauseCircleIcon, AlertCircleIcon, XCircleIcon, InfoIcon } from 'lucide-react'; // Added InfoIcon
 import { Button } from "@/components/ui/button"; // Added Button
@@ -33,26 +33,47 @@ const MotorNode: React.FC<NodeProps<MotorNodeData>> = (props) => { // Reverted t
     [isEditMode, currentUser]
   );
 
+  // --- Reactive OPC-UA Values for Styling and Display ---
+  const statusLink = useMemo(() => data.dataPointLinks?.find(link => link.targetProperty === 'status'), [data.dataPointLinks]);
+  const statusDataPointConfig = useMemo(() => statusLink ? dataPoints[statusLink.dataPointId] : undefined, [statusLink, dataPoints]);
+  const statusOpcUaNodeId = useMemo(() => statusDataPointConfig?.nodeId, [statusDataPointConfig]);
+  const reactiveStatusValue = useOpcUaNodeValue(statusOpcUaNodeId);
+
+  const powerLink = useMemo(() => data.dataPointLinks?.find(link => link.targetProperty === 'powerConsumption' || link.targetProperty === 'activePower'), [data.dataPointLinks]);
+  const powerDataPointConfig = useMemo(() => powerLink ? dataPoints[powerLink.dataPointId] : undefined, [powerLink, dataPoints]);
+  const powerOpcUaNodeId = useMemo(() => powerDataPointConfig?.nodeId, [powerDataPointConfig]);
+  const reactivePowerValue = useOpcUaNodeValue(powerOpcUaNodeId);
+
   const processedStatus = useMemo(() => {
-    const statusLink = data.dataPointLinks?.find(link => link.targetProperty === 'status');
-    if (statusLink && dataPoints && dataPoints[statusLink.dataPointId] && opcUaNodeValues) { // Added dataPoints and opcUaNodeValues checks
-      const rawValue = getDataPointValue(statusLink.dataPointId, opcUaNodeValues, dataPoints); // Pass all three
-      return applyValueMapping(rawValue, statusLink);
+    if (statusLink && reactiveStatusValue !== undefined) {
+      // Original call: getDataPointValue(statusLink.dataPointId, opcUaNodeValues, dataPoints)
+      // Corrected if direct: getDataPointValue(statusLink.dataPointId, dataPoints, opcUaNodeValues)
+      return applyValueMapping(reactiveStatusValue, statusLink);
     }
     return data.status || 'stopped'; // Default status
-  }, [data.dataPointLinks, data.status, opcUaNodeValues, dataPoints]);
+  }, [statusLink, reactiveStatusValue, data.status]);
 
   const powerDisplay = useMemo(() => {
-    const powerLink = data.dataPointLinks?.find(link => link.targetProperty === 'powerConsumption' || link.targetProperty === 'activePower');
-    if (powerLink && dataPoints && dataPoints[powerLink.dataPointId] && opcUaNodeValues) { // Added dataPoints and opcUaNodeValues checks
-        const dpMeta = dataPoints[powerLink.dataPointId];
-        const rawValue = getDataPointValue(powerLink.dataPointId, opcUaNodeValues, dataPoints); // Pass all three
-        const mappedValue = applyValueMapping(rawValue, powerLink);
-        return formatDisplayValue(mappedValue, powerLink.format, dpMeta?.dataType);
+    if (powerLink && reactivePowerValue !== undefined) {
+      // Original call: getDataPointValue(powerLink.dataPointId, opcUaNodeValues, dataPoints)
+      // Corrected if direct: getDataPointValue(powerLink.dataPointId, dataPoints, opcUaNodeValues)
+      const dpMeta = dataPoints[powerLink.dataPointId]; // dpMeta still needed for formatDisplayValue
+      const mappedValue = applyValueMapping(reactivePowerValue, powerLink);
+      return formatDisplayValue(mappedValue, powerLink.format, dpMeta?.dataType);
     }
     return data.config?.ratedPowerkW ? `${data.config.ratedPowerkW}kW` : 'N/A';
-  }, [data.dataPointLinks, data.config?.ratedPowerkW, opcUaNodeValues, dataPoints]);
+  }, [powerLink, reactivePowerValue, dataPoints, data.config?.ratedPowerkW]);
 
+  const opcUaValuesForDerivedStyle = useMemo(() => {
+      const values: Record<string, string | number | boolean> = {};
+      if (statusOpcUaNodeId && reactiveStatusValue !== undefined) {
+          values[statusOpcUaNodeId] = reactiveStatusValue;
+      }
+      if (powerOpcUaNodeId && reactivePowerValue !== undefined) {
+          values[powerOpcUaNodeId] = reactivePowerValue;
+      }
+      return values;
+  }, [statusOpcUaNodeId, reactiveStatusValue, powerOpcUaNodeId, reactivePowerValue]);
 
   const { StatusIcon, statusText, baseClasses, isSpinning } = useMemo(() => {
     let icon = CogIcon;
@@ -81,8 +102,8 @@ const MotorNode: React.FC<NodeProps<MotorNodeData>> = (props) => { // Reverted t
   }, [processedStatus]);
 
   const derivedNodeStyles = useMemo(() => 
-    getDerivedStyle(data, opcUaNodeValues, dataPoints), // Changed realtimeData to opcUaNodeValues
-    [data, opcUaNodeValues, dataPoints]
+    getDerivedStyle(data, dataPoints, opcUaValuesForDerivedStyle, opcUaNodeValues),
+    [data, dataPoints, opcUaValuesForDerivedStyle, opcUaNodeValues]
   );
   
   const MotorSymbolSVG = ({ className, isSpinning }: { className?: string, isSpinning?: boolean }) => {

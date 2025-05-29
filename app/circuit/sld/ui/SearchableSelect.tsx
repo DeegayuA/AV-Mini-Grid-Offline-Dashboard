@@ -33,6 +33,8 @@ export interface ComboboxOption {
  * Props for the SearchableSelect component.
  */
 interface SearchableSelectProps {
+  /** Optional ID for the component, primarily for the input field. */
+  id?: string;
   /** Array of options to display in the select. */
   options: ComboboxOption[];
   /** The currently selected value. */
@@ -58,6 +60,7 @@ interface SearchableSelectProps {
  * It allows users to select an option from a list, with the ability to search.
  */
 export function SearchableSelect({
+  id, // Add id here
   options,
   value,
   onChange,
@@ -102,6 +105,7 @@ export function SearchableSelect({
       >
         <Command>
           <CommandInput
+            id={id} // Add this line
             placeholder={searchPlaceholder}
             // The `CommandInput` automatically focuses when the popover opens.
           />

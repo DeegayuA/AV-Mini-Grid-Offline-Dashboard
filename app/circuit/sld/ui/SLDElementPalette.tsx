@@ -76,9 +76,9 @@ export const categorizedComponents: PaletteCategory[] = [
     name: 'Measurement & Control',
     components: [
       { type: SLDElementType.Sensor, label: 'Sensor', icon: <Thermometer size={16}/>,
-        defaultData: { label: 'Sensor', status: 'reading', config: { sensorType: 'Temperature'} } },
+        defaultData: { label: 'Sensor', status: 'reading', config: { sensorType: 'Temperature'}, elementType: SLDElementType.Sensor } },
       { type: SLDElementType.PLC, label: 'PLC', icon: <Cpu size={16}/>,
-        defaultData: { label: 'Main PLC', status: 'running' } },
+        defaultData: { label: 'Main PLC', status: 'running', elementType: SLDElementType.PLC } },
       { 
         type: SLDElementType.Gauge, 
         label: 'Gauge', 

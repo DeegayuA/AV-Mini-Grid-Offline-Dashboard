@@ -3,7 +3,7 @@ import React, { memo, useMemo } from 'react';
 import { NodeProps, Handle, Position } from 'reactflow'; // Reverted to NodeProps
 import { motion } from 'framer-motion';
 import { TransformerNodeData, CustomNodeType, DataPointLink, DataPoint } from '@/types/sld'; // Added CustomNodeType
-import { useAppStore } from '@/stores/appStore';
+import { useAppStore, useOpcUaNodeValue } from '@/stores/appStore'; // Added useOpcUaNodeValue
 import { getDataPointValue, applyValueMapping, formatDisplayValue, getDerivedStyle } from './nodeUtils';
 import { GitBranchPlusIcon, AlertTriangleIcon, InfoIcon } from 'lucide-react'; // Placeholder, ideally custom SVG. Added InfoIcon
 import { Button } from "@/components/ui/button"; // Added Button
@@ -24,34 +24,63 @@ const TransformerNode: React.FC<NodeProps<TransformerNodeData>> = (props) => { /
     [isEditMode, currentUser]
   );
 
+  // --- Reactive OPC-UA Values for Styling and Display ---
+  const statusLink = useMemo(() => data.dataPointLinks?.find(link => link.targetProperty === 'status'), [data.dataPointLinks]);
+  const statusDataPointConfig = useMemo(() => statusLink ? dataPoints[statusLink.dataPointId] : undefined, [statusLink, dataPoints]);
+  const statusOpcUaNodeId = useMemo(() => statusDataPointConfig?.nodeId, [statusDataPointConfig]);
+  const reactiveStatusValue = useOpcUaNodeValue(statusOpcUaNodeId);
+
+  const tempLink = useMemo(() => data.dataPointLinks?.find(link => link.targetProperty === 'temperature'), [data.dataPointLinks]);
+  const tempDataPointConfig = useMemo(() => tempLink ? dataPoints[tempLink.dataPointId] : undefined, [tempLink, dataPoints]);
+  const tempOpcUaNodeId = useMemo(() => tempDataPointConfig?.nodeId, [tempDataPointConfig]);
+  const reactiveTempValue = useOpcUaNodeValue(tempOpcUaNodeId);
+
+  const loadLink = useMemo(() => data.dataPointLinks?.find(link => link.targetProperty === 'loadPercentage'), [data.dataPointLinks]);
+  const loadDataPointConfig = useMemo(() => loadLink ? dataPoints[loadLink.dataPointId] : undefined, [loadLink, dataPoints]);
+  const loadOpcUaNodeId = useMemo(() => loadDataPointConfig?.nodeId, [loadDataPointConfig]);
+  const reactiveLoadValue = useOpcUaNodeValue(loadOpcUaNodeId);
+
   const processedStatus = useMemo(() => {
-    const statusLink = data.dataPointLinks?.find(link => link.targetProperty === 'status');
-    if (statusLink && dataPoints && dataPoints[statusLink.dataPointId] && opcUaNodeValues) { // Added dataPoints and opcUaNodeValues checks
-      const rawValue = getDataPointValue(statusLink.dataPointId, opcUaNodeValues, dataPoints); // Pass all three
-      return applyValueMapping(rawValue, statusLink);
+    if (statusLink && reactiveStatusValue !== undefined) {
+      // Original call: getDataPointValue(statusLink.dataPointId, opcUaNodeValues, dataPoints)
+      // Corrected if direct: getDataPointValue(statusLink.dataPointId, dataPoints, opcUaNodeValues)
+      return applyValueMapping(reactiveStatusValue, statusLink);
     }
     return data.status || 'offline'; // Default status
-  }, [data.dataPointLinks, data.status, opcUaNodeValues, dataPoints]);
+  }, [statusLink, reactiveStatusValue, data.status]);
 
   // Example: Displaying temperature or load percentage if linked
   const additionalInfo = useMemo(() => {
-    const tempLink = data.dataPointLinks?.find(link => link.targetProperty === 'temperature');
-    if (tempLink && dataPoints && dataPoints[tempLink.dataPointId] && opcUaNodeValues) { // Added dataPoints and opcUaNodeValues checks
+    if (tempLink && reactiveTempValue !== undefined) {
+      // Original call: getDataPointValue(tempLink.dataPointId, opcUaNodeValues, dataPoints)
+      // Corrected if direct: getDataPointValue(tempLink.dataPointId, dataPoints, opcUaNodeValues)
       const dpMeta = dataPoints[tempLink.dataPointId];
-      const rawValue = getDataPointValue(tempLink.dataPointId, opcUaNodeValues, dataPoints); // Pass all three
-      const mappedValue = applyValueMapping(rawValue, tempLink);
+      const mappedValue = applyValueMapping(reactiveTempValue, tempLink);
       return `Temp: ${formatDisplayValue(mappedValue, tempLink.format, dpMeta?.dataType)}`;
     }
-    const loadLink = data.dataPointLinks?.find(link => link.targetProperty === 'loadPercentage');
-    if (loadLink && dataPoints && dataPoints[loadLink.dataPointId] && opcUaNodeValues) { // Added dataPoints and opcUaNodeValues checks
+    if (loadLink && reactiveLoadValue !== undefined) {
+      // Original call: getDataPointValue(loadLink.dataPointId, opcUaNodeValues, dataPoints)
+      // Corrected if direct: getDataPointValue(loadLink.dataPointId, dataPoints, opcUaNodeValues)
       const dpMeta = dataPoints[loadLink.dataPointId];
-      const rawValue = getDataPointValue(loadLink.dataPointId, opcUaNodeValues, dataPoints); // Pass all three
-      const mappedValue = applyValueMapping(rawValue, loadLink);
+      const mappedValue = applyValueMapping(reactiveLoadValue, loadLink);
       return `Load: ${formatDisplayValue(mappedValue, loadLink.format, dpMeta?.dataType)}`;
     }
     return `${data.config?.primaryVoltage || 'HV'}/${data.config?.secondaryVoltage || 'LV'}`;
-  }, [data.dataPointLinks, data.config, opcUaNodeValues, dataPoints]);
+  }, [tempLink, reactiveTempValue, loadLink, reactiveLoadValue, dataPoints, data.config]);
 
+  const opcUaValuesForDerivedStyle = useMemo(() => {
+      const values: Record<string, string | number | boolean> = {};
+      if (statusOpcUaNodeId && reactiveStatusValue !== undefined) {
+          values[statusOpcUaNodeId] = reactiveStatusValue;
+      }
+      if (tempOpcUaNodeId && reactiveTempValue !== undefined) {
+          values[tempOpcUaNodeId] = reactiveTempValue;
+      }
+      if (loadOpcUaNodeId && reactiveLoadValue !== undefined) {
+          values[loadOpcUaNodeId] = reactiveLoadValue;
+      }
+      return values;
+  }, [statusOpcUaNodeId, reactiveStatusValue, tempOpcUaNodeId, reactiveTempValue, loadOpcUaNodeId, reactiveLoadValue]);
 
   const statusStyles = useMemo(() => {
     if (processedStatus === 'fault' || processedStatus === 'alarm') 
@@ -65,8 +94,8 @@ const TransformerNode: React.FC<NodeProps<TransformerNodeData>> = (props) => { /
   }, [processedStatus]);
 
   const derivedNodeStyles = useMemo(() => 
-    getDerivedStyle(data, opcUaNodeValues, dataPoints), // Changed realtimeData to opcUaNodeValues
-    [data, opcUaNodeValues, dataPoints]
+    getDerivedStyle(data, dataPoints, opcUaValuesForDerivedStyle, opcUaNodeValues),
+    [data, dataPoints, opcUaValuesForDerivedStyle, opcUaNodeValues]
   );
 
   const isTransformerEnergized = useMemo(() => 
