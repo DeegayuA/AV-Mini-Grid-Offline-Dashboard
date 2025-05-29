@@ -66,7 +66,7 @@ export default function AnimatedFlowEdge({
 
   const animConfig = data?.animationSettings; // This is AnimationFlowConfig from types/sld.ts
   // Access the global invert flag, SLDWidget should ensure this is present if applicable.
-  const masterGlobalInvertActive = (animConfig as GlobalSLDAnimationSettings)?.globallyInvertDefaultDynamicFlowLogic ?? false;
+  const masterGlobalInvertActive = (animConfig as any)?.globallyInvertDefaultDynamicFlowLogic ?? false;
 
 
   // --- Determine Animation Behavior based on animationType ---
