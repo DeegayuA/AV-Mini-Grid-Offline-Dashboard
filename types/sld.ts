@@ -285,17 +285,12 @@ export interface AnimationFlowConfig {
   gridNetFlowDataPointId?: string;
   speedMultiplier?: number;       // Applied to |net flow| for dynamic speed
   invertFlowDirection?: boolean;  // Inverts calculated dynamic direction
+  dynamicForcedDirection?: 'forward' | 'reverse' | 'none'; // Override for dynamic flow direction
 
   // For 'constant_unidirectional'
   constantFlowDirection?: 'forward' | 'reverse'; // S->T or T->S
   constantFlowSpeed?: 'slow' | 'medium' | 'fast' | number; // Predefined or custom ms/s
   constantFlowActivationDataPointId?: string; // Optional boolean DP to toggle animation
-}
-
-export interface GlobalSLDAnimationSettings extends AnimationFlowConfig {
-  // animationType here sets the GLOBAL DEFAULT animation type
-  isEnabled?: boolean; // Enable/disable all global settings
-  globallyInvertDefaultDynamicFlowLogic?: boolean; // Master switch for default dynamic direction logic
 }
 
 // --- Edge Data ---

@@ -1043,6 +1043,7 @@ const SLDWidgetCore: React.FC<SLDWidgetCoreProps> = ({
           gridNetFlowDataPointId: config.gridNetFlowDataPointId,
           speedMultiplier: config.speedMultiplier,
           invertFlowDirection: config.invertFlowDirection,
+          dynamicForcedDirection: config.dynamicForcedDirection, // Added
           constantFlowDirection: config.constantFlowDirection,
           constantFlowSpeed: config.constantFlowSpeed,
           constantFlowActivationDataPointId: config.constantFlowActivationDataPointId,
@@ -1067,6 +1068,7 @@ const SLDWidgetCore: React.FC<SLDWidgetCoreProps> = ({
                 gridNetFlowDataPointId: config.gridNetFlowDataPointId,
                 speedMultiplier: config.speedMultiplier,
                 invertFlowDirection: config.invertFlowDirection,
+                dynamicForcedDirection: config.dynamicForcedDirection, // Added
                 constantFlowDirection: config.constantFlowDirection,
                 constantFlowSpeed: config.constantFlowSpeed,
                 constantFlowActivationDataPointId: config.constantFlowActivationDataPointId,
@@ -1100,6 +1102,7 @@ const SLDWidgetCore: React.FC<SLDWidgetCoreProps> = ({
                 gridNetFlowDataPointId: config.gridNetFlowDataPointId,
                 speedMultiplier: config.speedMultiplier,
                 invertFlowDirection: config.invertFlowDirection,
+                dynamicForcedDirection: config.dynamicForcedDirection, // Added
                 constantFlowDirection: config.constantFlowDirection,
                 constantFlowSpeed: config.constantFlowSpeed,
                 constantFlowActivationDataPointId: config.constantFlowActivationDataPointId,

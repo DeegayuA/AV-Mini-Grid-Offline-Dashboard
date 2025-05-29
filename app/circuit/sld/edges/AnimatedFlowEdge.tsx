@@ -99,9 +99,16 @@ export default function AnimatedFlowEdge({
     }
 
     // 3. Apply Edge-Specific Invert for Dynamic Flow
-    animationDirection = directionAfterGlobalInvert;
-    if (animConfig?.invertFlowDirection && flowActive) {
-      animationDirection = (directionAfterGlobalInvert === 'normal') ? 'reverse' : 'normal';
+    let determinedDynamicDirection = directionAfterGlobalInvert;
+    if (animConfig?.invertFlowDirection && flowActive && animConfig?.dynamicForcedDirection === 'none') { // Only apply if not forced
+      determinedDynamicDirection = (directionAfterGlobalInvert === 'normal') ? 'reverse' : 'normal';
+    }
+
+    // 4. Apply Forced Direction Override
+    if (animConfig?.dynamicForcedDirection && animConfig.dynamicForcedDirection !== 'none') {
+      animationDirection = animConfig.dynamicForcedDirection === 'forward' ? 'normal' : 'reverse';
+    } else {
+      animationDirection = determinedDynamicDirection;
     }
     
     // Speed for Dynamic Flow

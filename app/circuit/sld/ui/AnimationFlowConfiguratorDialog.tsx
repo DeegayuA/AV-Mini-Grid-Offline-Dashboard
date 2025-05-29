@@ -151,6 +151,7 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
   const [gridNetFlowDp, setGridNetFlowDp] = useState<string | undefined>(undefined);
   const [dynamicSpeedMultiplier, setDynamicSpeedMultiplier] = useState<number>(1);
   const [invertDynamicFlow, setInvertDynamicFlow] = useState<boolean>(false);
+  const [dynamicForcedDirectionOverride, setDynamicForcedDirectionOverride] = useState<'none' | 'forward' | 'reverse'>('none');
 
   const [constantDirection, setConstantDirection] = useState<'forward' | 'reverse'>('forward');
   const [constantSpeed, setConstantSpeed] = useState<string>('medium'); 
@@ -207,6 +208,7 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
     setGridNetFlowDp(fdsMode === 'grid_net_flow' ? effectiveConfig?.gridNetFlowDataPointId : undefined);
     setDynamicSpeedMultiplier(effectiveConfig?.speedMultiplier ?? 1);
     setInvertDynamicFlow(effectiveConfig?.invertFlowDirection ?? false);
+    setDynamicForcedDirectionOverride(effectiveConfig?.dynamicForcedDirection ?? 'none');
 
     setConstantDirection(effectiveConfig?.constantFlowDirection ?? 'forward');
     
@@ -228,6 +230,7 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
         gridNetFlowDataPointId: effectiveConfig?.gridNetFlowDataPointId,
         speedMultiplier: effectiveConfig?.speedMultiplier ?? 1,
         invertFlowDirection: effectiveConfig?.invertFlowDirection ?? false,
+        dynamicForcedDirection: effectiveConfig?.dynamicForcedDirection ?? 'none',
         constantFlowDirection: effectiveConfig?.constantFlowDirection ?? 'forward',
         constantFlowSpeed: effectiveConfig?.constantFlowSpeed ?? 'medium',
         constantFlowActivationDataPointId: effectiveConfig?.constantFlowActivationDataPointId,
@@ -257,7 +260,7 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
        setActiveTab('dynamic_power_flow'); 
        setFlowDataSourceMode('gen_usage');
        setGenerationDp(undefined); setUsageDp(undefined); setGridNetFlowDp(undefined);
-       setDynamicSpeedMultiplier(1); setInvertDynamicFlow(false);
+       setDynamicSpeedMultiplier(1); setInvertDynamicFlow(false); setDynamicForcedDirectionOverride('none');
        setConstantDirection('forward'); setConstantSpeed('medium'); setConstantActivationDp(undefined);
        setGloballyInvertAllDynamicDefaultFlow(false); // Reset to default expectation for this flag
        setInitialFormState({});
@@ -270,6 +273,7 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
     if (activeTab === 'dynamic_power_flow') {
         configOutput.speedMultiplier = dynamicSpeedMultiplier;
         configOutput.invertFlowDirection = invertDynamicFlow;
+        configOutput.dynamicForcedDirection = dynamicForcedDirectionOverride;
         if (flowDataSourceMode === 'grid_net_flow') {
             configOutput.gridNetFlowDataPointId = gridNetFlowDp;
             // Clear other DPs
@@ -320,6 +324,7 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
         if (gridNetFlowDp !== initialFormState.gridNetFlowDataPointId) return true;
         if (dynamicSpeedMultiplier !== initialFormState.speedMultiplier) return true;
         if (invertDynamicFlow !== initialFormState.invertFlowDirection) return true;
+        if (dynamicForcedDirectionOverride !== initialFormState.dynamicForcedDirection) return true;
     } else if (activeTab === 'constant_unidirectional') {
         if (constantDirection !== initialFormState.constantFlowDirection) return true;
         if (constantSpeed !== initialFormState.constantFlowSpeed) return true;
@@ -331,7 +336,7 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
     }
     return false;
   }, [
-    activeTab, flowDataSourceMode, generationDp, usageDp, gridNetFlowDp, dynamicSpeedMultiplier, invertDynamicFlow,
+    activeTab, flowDataSourceMode, generationDp, usageDp, gridNetFlowDp, dynamicSpeedMultiplier, invertDynamicFlow, dynamicForcedDirectionOverride,
     constantDirection, constantSpeed, constantActivationDp,
     globallyInvertAllDynamicDefaultFlow, initialFormState, mode
   ]);
@@ -367,6 +372,7 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
       gridNetFlowDataPointId: gridNetFlowDp,
       speedMultiplier: dynamicSpeedMultiplier,
       invertFlowDirection: invertDynamicFlow,
+      dynamicForcedDirection: dynamicForcedDirectionOverride,
       constantFlowDirection: constantDirection,
       constantFlowSpeed: ['slow', 'medium', 'fast'].includes(constantSpeed) 
           ? constantSpeed as 'slow' | 'medium' | 'fast' 
@@ -465,38 +471,59 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
                 This base direction can be flipped by "Invert" options below.
               </div>
             </div>
+            
+            <div className="p-3 border rounded-lg bg-card shadow-sm space-y-4">
+                <h4 className="text-xs font-semibold text-foreground">Dynamic Flow: Direction Behavior</h4>
+                <div>
+                    <Label className="text-[11px] font-medium text-muted-foreground">Forced Direction Override</Label>
+                    <RadioGroup value={dynamicForcedDirectionOverride} onValueChange={(v) => setDynamicForcedDirectionOverride(v as 'none' | 'forward' | 'reverse')} className="flex flex-col sm:flex-row gap-2.5 mt-1.5">
+                        <Label htmlFor="df_dynamic" className="flex items-center space-x-2 p-2.5 border rounded-md flex-1 hover:border-primary has-[:checked]:border-primary has-[:checked]:bg-primary/5 transition-all cursor-pointer">
+                            <RadioGroupItem value="none" id="df_dynamic"/> <span className="text-xs">Dynamic (Data-Driven)</span>
+                        </Label>
+                        <Label htmlFor="df_forward" className="flex items-center space-x-2 p-2.5 border rounded-md flex-1 hover:border-primary has-[:checked]:border-primary has-[:checked]:bg-primary/5 transition-all cursor-pointer">
+                            <RadioGroupItem value="forward" id="df_forward"/> <span className="text-xs">Force Forward (S <span className="font-mono text-xs mx-0.5">→</span> T)</span>
+                        </Label>
+                        <Label htmlFor="df_reverse" className="flex items-center space-x-2 p-2.5 border rounded-md flex-1 hover:border-primary has-[:checked]:border-primary has-[:checked]:bg-primary/5 transition-all cursor-pointer">
+                            <RadioGroupItem value="reverse" id="df_reverse"/> <span className="text-xs">Force Reverse (T <span className="font-mono text-xs mx-0.5">→</span> S)</span>
+                        </Label>
+                    </RadioGroup>
+                    <p className="text-[11px] text-muted-foreground/80 pt-1">Overrides data-driven direction. Animation still activates and speeds up based on data.</p>
+                </div>
 
-            <div className="p-3 border rounded-lg bg-card shadow-sm space-y-3"> 
-                <h4 className="text-xs font-semibold text-foreground">Dynamic Flow: Direction Overrides</h4>
-                 <div className="space-y-0.5">
+                <div className="space-y-0.5 pt-2 border-t">
                     <div className="flex items-center space-x-2">
-                        <Checkbox id="invertDynamicFlow" checked={invertDynamicFlow} onCheckedChange={(cs) => setInvertDynamicFlow(Boolean(cs.valueOf()))} />
+                        <Checkbox id="invertDynamicFlow" checked={invertDynamicFlow} onCheckedChange={(cs) => setInvertDynamicFlow(Boolean(cs.valueOf()))} disabled={dynamicForcedDirectionOverride !== 'none'} />
                         <Label htmlFor="invertDynamicFlow" className="text-xs font-normal cursor-pointer flex items-center gap-1.5">
                             <Repeat2 size={14} className="text-blue-500"/>
                             Invert Dynamic Flow Direction for {mode === 'global' ? 'GLOBAL DEFAULTS' : mode === 'selected_edges' ? 'SELECTED Edges' : 'THIS Edge'}
                         </Label>
                     </div>
-                    <p className="text-[11px] text-muted-foreground/80 pl-6">Flips calculated direction (after any Global Master Invert) for this specific configuration.</p>
+                    <p className="text-[11px] text-muted-foreground/80 pl-6">
+                        Flips data-driven direction (after any Global Master Invert). <strong className={clsx(dynamicForcedDirectionOverride !== 'none' && "text-orange-500")}>Disabled if a Forced Direction Override is active.</strong>
+                    </p>
                 </div>
 
                  {mode === 'global' && (
-                    <div className="pt-2 mt-2 border-t space-y-0.5">
+                    <div className="pt-3 mt-3 border-t space-y-0.5">
                         <div className="flex items-center space-x-2">
                             <Checkbox 
                                 id="globallyInvertAllDynamicDefaultFlow" 
                                 checked={globallyInvertAllDynamicDefaultFlow} 
                                 onCheckedChange={(cs) => setGloballyInvertAllDynamicDefaultFlow(Boolean(cs.valueOf()))} 
+                                disabled={dynamicForcedDirectionOverride !== 'none'}
                             />
                             <Label htmlFor="globallyInvertAllDynamicDefaultFlow" className="text-xs font-normal cursor-pointer flex items-center gap-1.5">
                                 <RotateCcw size={14} className="text-purple-500"/>
                                 <span className="font-semibold">Master Global Invert:</span> Flip Default Dynamic Flow for ALL Edges
                             </Label>
                         </div>
-                        <p className="text-[11px] text-muted-foreground/80 pl-6">This master switch inverts the base calculated direction for all edges using dynamic flow, <strong className="font-medium">before</strong> any edge-specific or global default inversion is applied. Useful if your system's "positive" means import instead of export.</p>
+                        <p className="text-[11px] text-muted-foreground/80 pl-6">
+                            This master switch inverts the base data-driven direction for all edges, <strong className="font-medium">before</strong> any edge-specific inversion. <strong className={clsx(dynamicForcedDirectionOverride !== 'none' && "text-orange-500")}>Disabled if a Forced Direction Override is active.</strong>
+                        </p>
                     </div>
                  )}
             </div>
-            <div className="p-3 border rounded-lg bg-card shadow-sm">
+            <div className="p-3 border rounded-lg bg-card shadow-sm mt-4">
                 <h4 className="text-xs font-semibold text-foreground mb-1.5">Dynamic Flow: Animation Speed Multiplier</h4>
                  <div>
                     <Label htmlFor="dynamicSpeedMultiplier" className="text-[11px] font-medium text-muted-foreground">Speed Multiplier</Label>
@@ -554,7 +581,11 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
                 <div className="pt-2 mt-2 border-t">
                     <Label htmlFor="constantActivationDp" className="text-[11px] font-medium text-muted-foreground">Activation DataPoint (Optional)</Label>
                     <SearchableSelect options={booleanDataPointOptions} value={constantActivationDp} onChange={(v) => setConstantActivationDp(v||undefined)} placeholder="Select Boolean DP to toggle flow" searchPlaceholder="Search boolean DPs..." notFoundText="No boolean points."/>
-                    <p className="text-[11px] text-muted-foreground/80 pt-0.5">If set, flow animates only when this DataPoint is true.</p>
+                    <p className="text-[11px] text-muted-foreground/80 pt-0.5">
+                        If set, flow animates only when this DataPoint is true. 
+                        <strong className="font-medium">If no DataPoint is selected, the animation will be always on.</strong>
+                        To turn off animation, select the "No Animation" tab.
+                    </p>
                     {constantActivationDp && (<div className="mt-1 rounded-md border bg-muted/30 p-1.5 text-xs shadow-inner"><DataLinkLiveValuePreview dataPointId={constantActivationDp} format={{ type: 'boolean' }} valueMapping={undefined}/></div>)}
                 </div>
              </div>
