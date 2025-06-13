@@ -18,19 +18,25 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+} from '@/components/ui/select'; // Keep Select for other fields
 import { Switch } from '@/components/ui/switch';
 import { DataPoint } from '@/config/dataPoints';
 import { NotificationRule } from '@/types/notifications';
-import { Tags, Target, Binary, Sigma, Baseline, Zap, AlertTriangle, InfoIcon, Check, Loader2, Save, X } from 'lucide-react';
+import { Tags, Target, Binary, Sigma, Baseline, Zap, AlertTriangle, InfoIcon, Check, Loader2, Save, X, ChevronsUpDown } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area'; // If form becomes very long
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { useAppStore } from '@/lib/store';
+import { formatValue } from '@/app/DashboardData/formatValue';
 
 // Define the OPC data types based on usage in the component
 type OPC_DATA_TYPE_FriendlyNames = 'Boolean' | 'Float' | 'Double' | 'Int16' | 'Int32' | 'UInt16' | 'UInt32' | 'Byte' | 'SByte' | 'Int64' | 'UInt64' | 'String';
@@ -98,26 +104,62 @@ export const NotificationRuleForm: React.FC<NotificationRuleFormProps> = ({
   });
 
   const [selectedDataPointType, setSelectedDataPointType] = useState<OPC_DATA_TYPE_FriendlyNames | string | null>(null);
+  const [currentDataPointValueDisplay, setCurrentDataPointValueDisplay] = useState<string>('N/A');
+
+  const { opcUaNodeValues } = useAppStore((state) => ({
+    opcUaNodeValues: state.opcUaNodeValues,
+  }));
 
   const watchedDataPointKey = useWatch({ control: form.control, name: 'dataPointKey' });
   const watchedCondition = useWatch({ control: form.control, name: 'condition'});
 
   useEffect(() => {
     if (watchedDataPointKey) {
-      const dataPoint = allDataPoints.find(dp => dp.id === watchedDataPointKey || dp.nodeId === watchedDataPointKey); // Check both if needed
+      const dataPoint = allDataPoints.find(dp => dp.id === watchedDataPointKey || dp.nodeId === watchedDataPointKey);
       setSelectedDataPointType(dataPoint ? dataPoint.dataType : null);
-      // Reset threshold if data type changes fundamentally for some conditions
-      if (dataPoint?.dataType === 'Boolean' && (watchedCondition !== 'is_true' && watchedCondition !== 'is_false')) {
-         form.setValue('condition', 'is_true'); // Default for boolean
-         form.setValue('thresholdInputString', 'true'); // Reset threshold field
-      } else if (dataPoint?.dataType !== 'Boolean' && (watchedCondition === 'is_true' || watchedCondition === 'is_false')) {
-         form.setValue('condition', '=='); // Reset condition
-      }
 
+      if (dataPoint) {
+        const rawValue = opcUaNodeValues[dataPoint.nodeId]; // dataPointKey is nodeId
+        if (rawValue !== undefined && rawValue !== null) {
+          const factor = dataPoint.factor ?? 1;
+          const adjustedValue = typeof rawValue === 'number' ? rawValue * factor : rawValue; // Apply factor only if number
+
+          // Ensure 'formatValue' expects the adjusted value if factor is applied before,
+          // or pass rawValue and let formatValue handle factors if that's its design.
+          // Based on formatValue signature, it takes raw value and config, and applies factor internally if needed.
+          // However, the provided formatValue doesn't seem to use config.factor.
+          // For now, let's assume formatValue expects a pre-adjusted value or a simple number.
+          // Re-evaluating formatValue, it does not use factor. So we should adjust before calling.
+
+          let displayVal: string;
+          if (typeof adjustedValue === 'number') {
+            displayVal = formatValue(adjustedValue, dataPoint);
+          } else if (typeof adjustedValue === 'boolean') { // formatValue might handle booleans via dataType
+             displayVal = formatValue(adjustedValue ? 1 : 0, dataPoint); // Convert boolean to number for formatValue
+          } else {
+            // For strings or other types, display directly or with minimal formatting if needed
+            displayVal = String(adjustedValue);
+          }
+          setCurrentDataPointValueDisplay(displayVal ? `${displayVal} ${dataPoint.unit || ''}`.trim() : 'N/A');
+        } else {
+          setCurrentDataPointValueDisplay('N/A (no live value)');
+        }
+
+        // Reset threshold if data type changes fundamentally for some conditions
+        if (dataPoint.dataType === 'Boolean' && (watchedCondition !== 'is_true' && watchedCondition !== 'is_false')) {
+           form.setValue('condition', 'is_true'); // Default for boolean
+           form.setValue('thresholdInputString', 'true'); // Reset threshold field
+        } else if (dataPoint.dataType !== 'Boolean' && (watchedCondition === 'is_true' || watchedCondition === 'is_false')) {
+           form.setValue('condition', '=='); // Reset condition
+        }
+      } else {
+        setCurrentDataPointValueDisplay('N/A');
+      }
     } else {
       setSelectedDataPointType(null);
+      setCurrentDataPointValueDisplay('N/A');
     }
-  }, [watchedDataPointKey, allDataPoints, form, watchedCondition]);
+  }, [watchedDataPointKey, allDataPoints, form, watchedCondition, opcUaNodeValues]);
 
 
   const getProcessedThresholdValue = (inputValue: string | undefined, dataType: OPC_DATA_TYPE_FriendlyNames | string | null): number | string | boolean => {
@@ -248,33 +290,85 @@ export const NotificationRuleForm: React.FC<NotificationRuleFormProps> = ({
         <motion.div custom={1} variants={formItemVariants} className="p-4 border rounded-lg bg-background shadow-sm dark:border-slate-700">
             <h3 className="text-lg font-semibold mb-3 flex items-center text-slate-700 dark:text-slate-200"><Target className="mr-2 h-5 w-5 text-primary"/> Trigger Condition</h3>
             <FormField
-            control={form.control}
-            name="dataPointKey"
-            render={({ field }) => (
-                <FormItem className="mb-4">
-                <FormLabel>Data Point to Monitor</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                    <SelectTrigger className="h-10">
-                        <SelectValue placeholder="Select a data point source" />
-                    </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                    {allDataPoints.map((dp) => (
-                        <SelectItem key={dp.id || dp.nodeId} value={dp.id || dp.nodeId}>
-                        {dp.name || dp.id} <span className="text-xs opacity-70 ml-2">({dp.nodeId} - {dp.dataType})</span>
-                        </SelectItem>
-                    ))}
-                    </SelectContent>
-                </Select>
-                 {selectedDataPointType && (
-                    <FormDescription className="mt-1">
+              control={form.control}
+              name="dataPointKey"
+              render={({ field }) => (
+                <FormItem className="mb-4 flex flex-col">
+                  <FormLabel>Data Point to Monitor</FormLabel>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <FormControl>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          className={cn(
+                            'w-full justify-between h-10',
+                            !field.value && 'text-muted-foreground'
+                          )}
+                        >
+                          {field.value
+                            ? (allDataPoints.find(
+                                (dp) => (dp.id || dp.nodeId) === field.value
+                              )?.name || field.value)
+                            : 'Select a data point source'}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </FormControl>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[--radix-popover-trigger-width] max-h-[--radix-popover-content-available-height] p-0">
+                      <Command>
+                        <CommandInput
+                          placeholder="Search data points..."
+                          className="h-9"
+                        />
+                        <CommandList>
+                          <CommandEmpty>No data point found.</CommandEmpty>
+                          <CommandGroup>
+                            {allDataPoints.map((dp) => {
+                              const dpValue = dp.id || dp.nodeId;
+                              return (
+                                <CommandItem
+                                  value={`${dp.name} ${dpValue} ${dp.dataType}`} // Value for search
+                                  key={dpValue}
+                                  onSelect={() => {
+                                    form.setValue('dataPointKey', dpValue);
+                                    // Popover should close automatically on select if it's typical cmdk behavior,
+                                    // otherwise, add open/setOpen state for Popover and setOpen(false) here.
+                                  }}
+                                >
+                                  <div className="flex flex-col">
+                                    <span>{dp.name || dp.id}</span>
+                                    <span className="text-xs opacity-70">
+                                      ID: {dpValue} ({dp.dataType})
+                                    </span>
+                                  </div>
+                                  <Check
+                                    className={cn(
+                                      'ml-auto h-4 w-4',
+                                      dpValue === field.value
+                                        ? 'opacity-100'
+                                        : 'opacity-0'
+                                    )}
+                                  />
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  {selectedDataPointType && (
+                    <FormDescription className="mt-1 text-xs">
                       Selected type: <span className="font-semibold text-primary">{selectedDataPointType}</span>
                     </FormDescription>
                   )}
-                <FormMessage />
+                   <FormDescription className="mt-1 text-xs">
+                      Current Value: <span className="font-semibold text-blue-600 dark:text-blue-400">{currentDataPointValueDisplay}</span>
+                    </FormDescription>
+                  <FormMessage />
                 </FormItem>
-            )}
+              )}
             />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
