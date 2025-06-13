@@ -13,13 +13,11 @@ interface ValueDisplayContentProps {
     nodeValues: NodeData;
     isDisabled: boolean;
     sendDataToWebSocket: (nodeId: string, value: any) => void;
-    playNotificationSound: (type: 'success' | 'error' | 'warning' | 'info') => void;
-    lastToastTimestamps: React.MutableRefObject<Record<string, number>>;
     isEditMode: boolean;
 }
 
 const ValueDisplayContent: React.FC<ValueDisplayContentProps> = React.memo(
-    ({ item: config, nodeValues, isDisabled, sendDataToWebSocket, playNotificationSound, lastToastTimestamps, isEditMode }) => {
+    ({ item: config, nodeValues, isDisabled, sendDataToWebSocket, isEditMode }) => {
         // Safely derive nodeId. It defaults to '' if config.nodeId is not present or falsy.
         const nodeId = ('nodeId' in config && config.nodeId) ? config.nodeId : '';
         const value = nodeId ? nodeValues[nodeId] : undefined;
@@ -41,50 +39,21 @@ const ValueDisplayContent: React.FC<ValueDisplayContentProps> = React.memo(
             valueClass = `font-semibold ${value ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`;
         } else if (typeof value === 'number') {
             const factor = config.factor ?? 1;
-            const min = config.min;
-            const max = config.max;
+            // const min = config.min; // Removed for notification logic
+            // const max = config.max; // Removed for notification logic
             let adjustedValue = value * factor;
             let displayValue = formatValue(adjustedValue, config);
 
             const isOnOff = displayValue === 'ON' || displayValue === 'OFF';
-            const isOutOfRange = !isOnOff && (
-                 (min !== undefined && adjustedValue < min) ||
-                 (max !== undefined && adjustedValue > max)
-            );
 
             if (isOnOff) {
                 valueClass = `font-semibold ${displayValue === 'ON' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`;
-            } else if (isOutOfRange) {
-                 valueClass = "text-yellow-600 dark:text-yellow-400 font-semibold";
-                 iconPrefix = <AlertCircle size={14} className="mr-1 inline-block" />;
+            }
+            // Removed isOutOfRange check and related notification logic.
+            // The valueClass will default to "text-foreground font-medium" if not ON/OFF.
+            // If specific styling for numbers (not ON/OFF and not out-of-range) is needed,
+            // it should be added here. For now, it inherits the default.
 
-                 const now = Date.now();
-                 // Only proceed with toast logic if nodeId is valid
-                 if (nodeId) {
-                    const lastToastTime = lastToastTimestamps.current[nodeId];
-                    const cooldown = 60 * 1000; // 60 seconds
-
-                    if (!lastToastTime || now - lastToastTime > cooldown) {
-                        const direction = (min !== undefined && adjustedValue < min) ? 'below minimum' : 'above maximum';
-                        const rangeText = `(Range: ${formatValue(min ?? null, config)} to ${formatValue(max ?? null, config)})`;
-                        toast.warning('Value Alert', {
-                            description: `${config.name}: ${displayValue}${unit || ''} is ${direction} ${rangeText}.`,
-                            duration: 8000,
-                            id: `value-alert-${nodeId}`
-                        });
-                        playNotificationSound('warning');
-                        lastToastTimestamps.current[nodeId] = now; // FIX 2: Use derived nodeId
-                    }
-                 }
-             } else {
-                 // If value was out of range but is now back, clear the cooldown
-                 // Only proceed if nodeId is valid
-                 if (nodeId && lastToastTimestamps.current[nodeId]) {
-                     delete lastToastTimestamps.current[nodeId];
-                     // Optional: Clear the toast if it's still visible and if nodeId is valid
-                     toast.dismiss(`value-alert-${nodeId}`); // FIX 3: Use derived nodeId
-                 }
-             }
             content = isOnOff ? displayValue : <>{displayValue}<span className="text-[10px] sm:text-xs text-muted-foreground ml-0.5">{unit || ''}</span></>;
 
         } else if (typeof value === 'string') {
