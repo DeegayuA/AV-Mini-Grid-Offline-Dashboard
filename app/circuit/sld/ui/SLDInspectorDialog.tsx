@@ -241,6 +241,20 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
         setAvailableLayouts(combined);
     }, []);
 
+    const handleSelectChange = useCallback((name: string, value: string | boolean | number | Record<string, any> | null | undefined) => {
+        setFormData(prev => {
+            const newState = JSON.parse(JSON.stringify(prev)); 
+            const keys = name.split('.');
+            let currentLevel: any = newState;
+            for (let i = 0; i < keys.length - 1; i++) {
+                if (!currentLevel[keys[i]] || typeof currentLevel[keys[i]] !== 'object') currentLevel[keys[i]] = {};
+                currentLevel = currentLevel[keys[i]];
+            }
+            currentLevel[keys[keys.length - 1]] = value;
+            return newState;
+        });
+    }, []);
+
     const handleAddNewSLD = useCallback(() => {
         const newSLDName = window.prompt("Enter a name for the new SLD layout:");
         if (!newSLDName || newSLDName.trim() === "") {
@@ -274,8 +288,7 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
                 description: `User created SLD layout: ${newSLDName}`,
                 version: '1.0',
                 author: 'User',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
+                lastModified: new Date().toISOString(),
                 globalAnimationSettings: undefined, // Or some default if applicable
             },
             nodes: [placeholderNode],
@@ -407,23 +420,6 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
             return newState;
         });
      }, []);
-     
-
-
-
-    const handleSelectChange = useCallback((name: string, value: string | boolean | number | Record<string, any> | null | undefined) => {
-        setFormData(prev => {
-            const newState = JSON.parse(JSON.stringify(prev)); 
-            const keys = name.split('.');
-            let currentLevel: any = newState;
-            for (let i = 0; i < keys.length - 1; i++) {
-                if (!currentLevel[keys[i]] || typeof currentLevel[keys[i]] !== 'object') currentLevel[keys[i]] = {};
-                currentLevel = currentLevel[keys[i]];
-            }
-            currentLevel[keys[keys.length - 1]] = value;
-            return newState;
-        });
-    }, []);
 
     // Specialized handler for ShadCN Checkbox as it uses onCheckedChange
     const handleCheckboxChange = useCallback((name: string, checked: boolean | 'indeterminate') => {

@@ -43,6 +43,7 @@ export const APP_COPYRIGHT = "© 2025 Alta Vision. All rights reserved.";
 export const APP_COPYRIGHT_URL = "https://yourwebsite.com/copyright";
 export const APP_PRIVACY_POLICY = "https://yourwebsite.com/privacy-policy";
 export const APP_TERMS_OF_SERVICE = "https://yourwebsite.com/terms-of-service";
+export const LOCAL_STORAGE_KEY_PREFIX = "AVR&D_Test_V_"
 
 // Ensure this is defined and exported
 export const AVAILABLE_SLD_LAYOUT_IDS: string[] = ['ranna_sld','main_plant', 'secondary_plant', 'empty_template', 'new_project_canvas', 'test_data_nodes_layout'];
