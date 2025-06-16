@@ -1,6 +1,6 @@
 // components/sld/edges/AnimatedFlowEdge.tsx
 import React from 'react';
-import { EdgeProps, EdgeLabelRenderer } from 'reactflow';
+import { EdgeProps, EdgeLabelRenderer, Position } from 'reactflow'; // Imported Position
 import { getSmoothStepPath } from '@xyflow/react';
 import { getDataPointValue, applyValueMapping } from '../nodes/nodeUtils';
 import {
@@ -58,8 +58,25 @@ export default function AnimatedFlowEdge({
     dataPoints: state.dataPoints,
   }));
 
+  // Determine effective source and target positions based on flow type
+  let effectiveSourcePosition = sourcePosition;
+  let effectiveTargetPosition = targetPosition;
+
+  const typedAnimConfig = data?.animationSettings as (AnimationFlowConfig & Partial<GlobalSLDAnimationSettings>) | undefined;
+  const currentAnimationType = typedAnimConfig?.animationType || 'none';
+  const dynamicFlowTypeResolved: DynamicFlowType | undefined = typedAnimConfig?.dynamicFlowType;
+
+  if (
+    currentAnimationType === 'dynamic_power_flow' &&
+    (dynamicFlowTypeResolved === 'unidirectional_export' || dynamicFlowTypeResolved === 'unidirectional_import')
+  ) {
+    effectiveSourcePosition = Position.Bottom;
+    effectiveTargetPosition = Position.Bottom;
+  }
+
   const [edgePath, labelX, labelY] = getSmoothStepPath({
-    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
+    sourceX, sourceY, sourcePosition: effectiveSourcePosition,
+    targetX, targetY, targetPosition: effectiveTargetPosition,
   });
 
   let s1_isConceptuallyActive = false;
@@ -67,9 +84,9 @@ export default function AnimatedFlowEdge({
   let s1_dashdrawDirection: 'normal' | 'reverse' = 'normal';
   let s1_dashdrawDuration = '5s';
 
-  const typedAnimConfig = data?.animationSettings as (AnimationFlowConfig & Partial<GlobalSLDAnimationSettings>) | undefined;
+  // const typedAnimConfig = data?.animationSettings as (AnimationFlowConfig & Partial<GlobalSLDAnimationSettings>) | undefined; // Moved up
   const masterGlobalInvertActive = typedAnimConfig?.globallyInvertDefaultDynamicFlowLogic ?? false;
-  const currentAnimationType = typedAnimConfig?.animationType || 'none';
+  // const currentAnimationType = typedAnimConfig?.animationType || 'none'; // Moved up
 
   if (currentAnimationType === 'dynamic_power_flow') {
     s1_isConceptuallyActive = true; // Dynamic flow implies it's conceptually active if configured
@@ -77,9 +94,9 @@ export default function AnimatedFlowEdge({
     let baseDirectionDetermination: 'normal' | 'reverse' = 'normal'; // Used for bidirectional
     let applyMasterInvert = false;
 
-    const dynamicFlowTypeResolved: DynamicFlowType = typedAnimConfig?.dynamicFlowType ?? 'bidirectional_from_net'; // Fallback
+    // const dynamicFlowTypeResolved: DynamicFlowType = typedAnimConfig?.dynamicFlowType ?? 'bidirectional_from_net'; // Moved up, and allows undefined
 
-    switch (dynamicFlowTypeResolved) {
+    switch (dynamicFlowTypeResolved) { // Will use the already resolved dynamicFlowTypeResolved from above
       case 'bidirectional_gen_vs_usage':
         if (typedAnimConfig?.generationDataPointId && typedAnimConfig?.usageDataPointId) {
           const rawGen = getDataPointValue(typedAnimConfig.generationDataPointId, dataPoints, opcUaNodeValues);

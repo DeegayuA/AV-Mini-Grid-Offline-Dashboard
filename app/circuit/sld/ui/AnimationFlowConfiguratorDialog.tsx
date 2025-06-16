@@ -204,6 +204,9 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
   
   const [globallyInvertAllDynamicDefaultFlowMasterFlag, setGloballyInvertAllDynamicDefaultFlowMasterFlag] = useState<boolean>(false);
 
+  // New state for bulk flow direction
+  const [bulkFlowDirection, setBulkFlowDirection] = useState<'default' | 'grid_to_panels' | 'panels_to_grid'>('default');
+
   const [initialFormState, setInitialFormState] = 
     useState<Partial<DialogAnimationFlowConfig & { 
         initialActiveTab?: typeof activeTab,
@@ -361,8 +364,58 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
     if (mode === 'global') {
       (configOutput as DialogGlobalAnimationSettings).globallyInvertDefaultDynamicFlowLogic = globallyInvertAllDynamicDefaultFlowMasterFlag;
       onConfigure(configOutput, mode, globallyInvertAllDynamicDefaultFlowMasterFlag);
-    } else {
-      onConfigure(configOutput, mode); 
+    } else if (mode === 'selected_edges') {
+      // The actual iteration and modification of individual edges will be handled
+      // by the calling component based on the config passed to onConfigure.
+      // Here, we adjust the configOutput based on the bulkFlowDirection.
+      // The parent component will receive this configOutput and apply it to each selected edge.
+      // It will need to determine if a node is "Grid" or "Panel" and apply the logic accordingly.
+
+      if (activeTab === 'dynamic_power_flow') { // Only apply bulk logic if dynamic flow is selected
+        // Add bulkFlowDirection to the config output for the parent to use
+        // This allows the parent component to access the user's bulk selection
+        (configOutput as any).bulkFlowDirection = bulkFlowDirection;
+
+        switch (bulkFlowDirection) {
+          case 'grid_to_panels':
+            // The parent component will interpret this:
+            // - If an edge is Grid -> Panel: dynamicFlowType = 'unidirectional_import', invertFlowDirection = false
+            // - If an edge is Panel -> Grid: dynamicFlowType = 'unidirectional_export', invertFlowDirection = false
+            // We set a general dynamicFlowType here; parent will refine.
+            // To ensure some DPs are cleared if not relevant for this bulk operation,
+            // we can set a default type that uses dynamicMagnitudeDataPointId.
+            configOutput.dynamicFlowType = 'unidirectional_import'; // Default representative type
+            configOutput.invertFlowDirection = false; // Parent will adjust if needed
+            // Clear other DP types if they were set by the main radio group
+            configOutput.generationDataPointId = undefined;
+            configOutput.usageDataPointId = undefined;
+            configOutput.gridNetFlowDataPointId = undefined;
+            // dynamicMagnitudeDataPointId will be used/set by the user in the UI if this type remains.
+            break;
+          case 'panels_to_grid':
+            // The parent component will interpret this:
+            // - If an edge is Panel -> Grid: dynamicFlowType = 'unidirectional_import', invertFlowDirection = false
+            // - If an edge is Grid -> Panel: dynamicFlowType = 'unidirectional_export', invertFlowDirection = false
+            configOutput.dynamicFlowType = 'unidirectional_import'; // Default representative type
+            configOutput.invertFlowDirection = false; // Parent will adjust if needed
+            configOutput.generationDataPointId = undefined;
+            configOutput.usageDataPointId = undefined;
+            configOutput.gridNetFlowDataPointId = undefined;
+            break;
+          case 'default':
+          default:
+            // When 'default' is selected for bulk, the dynamicFlowType chosen in the main
+            // "Dynamic Flow Behavior" radio group should be applied to all selected edges.
+            // configOutput.dynamicFlowType is already set based on that radio group.
+            // No specific changes to dynamicFlowType or invertFlowDirection are needed here,
+            // as they are already correctly reflecting the user's choice in the main section.
+            // The (configOutput as any).bulkFlowDirection = bulkFlowDirection; line above handles passing this choice.
+            break;
+        }
+      }
+      onConfigure(configOutput, mode);
+    } else { // single_edge mode
+      onConfigure(configOutput, mode);
     }
     onOpenChange(false);
   };
@@ -500,6 +553,25 @@ const AnimationFlowConfiguratorDialog: React.FC<AnimationFlowConfiguratorDialogP
 
         <div className="space-y-4 py-3 flex-grow overflow-y-auto px-1 pr-3 custom-scrollbar mt-2 min-h-[300px]">
           <TabsContent value="dynamic_power_flow" className="mt-0 space-y-4 outline-none">
+            {/* Bulk Flow Direction UI for selected_edges mode */}
+            {mode === 'selected_edges' && (
+              <div className="p-3 border rounded-lg bg-card shadow-sm">
+                <Label className="text-xs font-semibold text-foreground mb-2.5 block">Bulk Flow Direction</Label>
+                <Select value={bulkFlowDirection} onValueChange={(v) => setBulkFlowDirection(v as any)}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Select bulk flow direction" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default" className="text-xs">Default (Bidirectional)</SelectItem>
+                    <SelectItem value="grid_to_panels" className="text-xs">Grid to Panels</SelectItem>
+                    <SelectItem value="panels_to_grid" className="text-xs">Panels to Grid</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground/80 pt-1">
+                  This option overrides individual edge settings for selected edges.
+                </p>
+              </div>
+            )}
             {/* MODIFIED: Dynamic Flow Type Selection */}
             <div className="p-3 border rounded-lg bg-card shadow-sm">
                 <Label className="text-xs font-semibold text-foreground mb-2.5 block">Dynamic Flow Behavior</Label>

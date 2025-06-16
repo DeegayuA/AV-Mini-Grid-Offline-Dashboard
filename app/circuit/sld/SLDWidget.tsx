@@ -29,6 +29,7 @@ import {
   SLDElementType, CustomFlowEdgeData, TextLabelNodeData, DataPoint, 
   AnimationFlowConfig, // This is the base type from types/sld.ts
   GlobalSLDAnimationSettings,
+  DynamicFlowType, // Added for type safety
 } from '@/types/sld';
 import {
   getThemeAwareColors, getNodeColor as getMiniMapNodeColor,
@@ -1604,62 +1605,169 @@ const SLDWidgetCore: React.FC<SLDWidgetCoreProps> = ({
     mode={animationConfiguratorTarget.mode}
     initialGlobalSettings={activeGlobalAnimationSettings as DialogGlobalAnimationSettings | undefined}
     onConfigure={(
-      config: DialogAnimationFlowConfig, 
+      dialogConfig: DialogAnimationFlowConfig, // Renamed to avoid conflict with internal config
       applyToMode: AnimationFlowConfiguratorMode,
-      setGlobalInvertFlag?: boolean 
+      setGlobalInvertFlag?: boolean
     ) => {
+      // Cast dialogConfig to include bulkFlowDirection, which was added in the dialog
+      const config = dialogConfig as DialogAnimationFlowConfig & { bulkFlowDirection?: 'default' | 'grid_to_panels' | 'panels_to_grid' };
+
       if (applyToMode === 'global') {
         const newGlobalSettings: GlobalSLDAnimationSettings = {
-          isEnabled: activeGlobalAnimationSettings?.isEnabled, // Preserve isEnabled
-          // Base animation fields from config
+          isEnabled: activeGlobalAnimationSettings?.isEnabled,
           animationType: config.animationType,
+          dynamicFlowType: config.dynamicFlowType,
+          dynamicMagnitudeDataPointId: config.dynamicMagnitudeDataPointId,
           generationDataPointId: config.generationDataPointId,
           usageDataPointId: config.usageDataPointId,
           gridNetFlowDataPointId: config.gridNetFlowDataPointId,
           speedMultiplier: config.speedMultiplier,
           invertFlowDirection: config.invertFlowDirection,
+          minDynamicDuration: config.minDynamicDuration,
+          maxDynamicDuration: config.maxDynamicDuration,
+          dynamicSpeedBaseDivisor: config.dynamicSpeedBaseDivisor,
           constantFlowDirection: config.constantFlowDirection,
           constantFlowSpeed: config.constantFlowSpeed,
           constantFlowActivationDataPointId: config.constantFlowActivationDataPointId,
+          minConstantDuration: config.minConstantDuration,
+          maxConstantDuration: config.maxConstantDuration,
         };
         
-        // Add the global invert flag if the property exists in the type
         if (setGlobalInvertFlag !== undefined) {
-          (newGlobalSettings as any).globallyInvertDefaultFlowForAllEdges = setGlobalInvertFlag;
+          (newGlobalSettings as any).globallyInvertDefaultDynamicFlowLogic = setGlobalInvertFlag; // Ensure this matches the property in GlobalSLDAnimationSettings
         }
         setActiveGlobalAnimationSettings(newGlobalSettings);
         setIsDirty(true);
 
-      } else if (applyToMode === 'selected_edges') {
+      } else if (applyToMode === 'selected_edges' && config.animationType === 'dynamic_power_flow') {
+        const bulkFlowDirection = config.bulkFlowDirection;
         const selectedEdgeIds = new Set(selectedEdgesFromReactFlow.map(e => e.id));
+
         setEdges(currentEdges =>
           currentEdges.map(edge => {
             if (!selectedEdgeIds.has(edge.id)) {
               return edge;
             }
-            // Construct AnimationFlowConfig from DialogAnimationFlowConfig
+
+            let newEdgeSettings: AnimationFlowConfig = {
+              ...(edge.data?.animationSettings || {}), // Start with existing or empty
+              animationType: config.animationType, // This is 'dynamic_power_flow'
+              // Apply general settings from dialog first
+              speedMultiplier: config.speedMultiplier,
+              minDynamicDuration: config.minDynamicDuration,
+              maxDynamicDuration: config.maxDynamicDuration,
+              dynamicSpeedBaseDivisor: config.dynamicSpeedBaseDivisor,
+              // These will be potentially overridden by bulk logic below
+              dynamicFlowType: config.dynamicFlowType,
+              invertFlowDirection: config.invertFlowDirection,
+              dynamicMagnitudeDataPointId: config.dynamicMagnitudeDataPointId,
+              generationDataPointId: config.generationDataPointId,
+              usageDataPointId: config.usageDataPointId,
+              gridNetFlowDataPointId: config.gridNetFlowDataPointId,
+            };
+
+            const sourceNode = nodes.find(n => n.id === edge.source);
+            const targetNode = nodes.find(n => n.id === edge.target);
+
+            if (sourceNode && targetNode) {
+              const sourceType = sourceNode.data.elementType;
+              const targetType = targetNode.data.elementType;
+
+              if (bulkFlowDirection === 'grid_to_panels') {
+                if (sourceType === SLDElementType.Grid && targetType === SLDElementType.Panel) {
+                  newEdgeSettings.dynamicFlowType = 'unidirectional_import';
+                  newEdgeSettings.invertFlowDirection = false;
+                } else if (sourceType === SLDElementType.Panel && targetType === SLDElementType.Grid) {
+                  newEdgeSettings.dynamicFlowType = 'unidirectional_export';
+                  newEdgeSettings.invertFlowDirection = false;
+                } else {
+                  // Apply general dialog selection if no specific match
+                  newEdgeSettings.dynamicFlowType = config.dynamicFlowType;
+                  newEdgeSettings.invertFlowDirection = config.invertFlowDirection;
+                }
+              } else if (bulkFlowDirection === 'panels_to_grid') {
+                if (sourceType === SLDElementType.Panel && targetType === SLDElementType.Grid) {
+                  newEdgeSettings.dynamicFlowType = 'unidirectional_import';
+                  newEdgeSettings.invertFlowDirection = false;
+                } else if (sourceType === SLDElementType.Grid && targetType === SLDElementType.Panel) {
+                  newEdgeSettings.dynamicFlowType = 'unidirectional_export';
+                  newEdgeSettings.invertFlowDirection = false;
+                } else {
+                  newEdgeSettings.dynamicFlowType = config.dynamicFlowType;
+                  newEdgeSettings.invertFlowDirection = config.invertFlowDirection;
+                }
+              } else { // 'default' or no bulkFlowDirection
+                newEdgeSettings.dynamicFlowType = config.dynamicFlowType;
+                newEdgeSettings.invertFlowDirection = config.invertFlowDirection;
+              }
+            } else { // Should not happen if graph is consistent
+                newEdgeSettings.dynamicFlowType = config.dynamicFlowType;
+                newEdgeSettings.invertFlowDirection = config.invertFlowDirection;
+            }
+
+            // Clear conflicting DPs based on the finally determined dynamicFlowType
+            if (newEdgeSettings.dynamicFlowType === 'unidirectional_import' || newEdgeSettings.dynamicFlowType === 'unidirectional_export') {
+              newEdgeSettings.generationDataPointId = undefined;
+              newEdgeSettings.usageDataPointId = undefined;
+              newEdgeSettings.gridNetFlowDataPointId = undefined;
+              newEdgeSettings.dynamicMagnitudeDataPointId = config.dynamicMagnitudeDataPointId; // Use from dialog
+            } else if (newEdgeSettings.dynamicFlowType === 'bidirectional_from_net') {
+              newEdgeSettings.generationDataPointId = undefined;
+              newEdgeSettings.usageDataPointId = undefined;
+              newEdgeSettings.dynamicMagnitudeDataPointId = undefined;
+              newEdgeSettings.gridNetFlowDataPointId = config.gridNetFlowDataPointId; // Use from dialog
+            } else if (newEdgeSettings.dynamicFlowType === 'bidirectional_gen_vs_usage') {
+              newEdgeSettings.gridNetFlowDataPointId = undefined;
+              newEdgeSettings.dynamicMagnitudeDataPointId = undefined;
+              newEdgeSettings.generationDataPointId = config.generationDataPointId; // Use from dialog
+              newEdgeSettings.usageDataPointId = config.usageDataPointId;       // Use from dialog
+            }
+
+            let edgeData: CustomFlowEdgeData = { ...(edge.data || {}) };
+            edgeData.animationSettings = newEdgeSettings;
+
+            if (newEdgeSettings.animationType !== 'none') {
+              edgeData.dataPointLinks = (edgeData.dataPointLinks || []).filter(link =>
+                !['isEnergized', 'flowDirection', 'animationSpeedFactor'].includes(link.targetProperty)
+              );
+              if (edgeData.dataPointLinks?.length === 0) delete edgeData.dataPointLinks;
+            }
+            return { ...edge, data: edgeData };
+          })
+        );
+        setIsDirty(true);
+      } else if (applyToMode === 'selected_edges') { // For non-dynamic_power_flow bulk changes (e.g. constant, none)
+        const selectedEdgeIds = new Set(selectedEdgesFromReactFlow.map(e => e.id));
+        setEdges(currentEdges =>
+          currentEdges.map(edge => {
+            if (!selectedEdgeIds.has(edge.id)) return edge;
+
             const newEdgeSpecificSettings: AnimationFlowConfig = {
-                animationType: config.animationType,
-                generationDataPointId: config.generationDataPointId,
-                usageDataPointId: config.usageDataPointId,
-                gridNetFlowDataPointId: config.gridNetFlowDataPointId,
-                speedMultiplier: config.speedMultiplier,
-                invertFlowDirection: config.invertFlowDirection,
+                animationType: config.animationType, // constant_unidirectional or none
                 constantFlowDirection: config.constantFlowDirection,
                 constantFlowSpeed: config.constantFlowSpeed,
                 constantFlowActivationDataPointId: config.constantFlowActivationDataPointId,
+                minConstantDuration: config.minConstantDuration,
+                maxConstantDuration: config.maxConstantDuration,
+                // Clear dynamic flow properties
+                dynamicFlowType: undefined,
+                dynamicMagnitudeDataPointId: undefined,
+                generationDataPointId: undefined,
+                usageDataPointId: undefined,
+                gridNetFlowDataPointId: undefined,
+                speedMultiplier: undefined,
+                invertFlowDirection: undefined,
+                minDynamicDuration: undefined,
+                maxDynamicDuration: undefined,
+                dynamicSpeedBaseDivisor: undefined,
             };
-            
             let edgeData: CustomFlowEdgeData = { ...(edge.data || {}) };
             edgeData.animationSettings = newEdgeSpecificSettings;
-            
             if (newEdgeSpecificSettings.animationType !== 'none') {
-                edgeData.dataPointLinks = (edgeData.dataPointLinks || []).filter(link =>
-                    !['isEnergized', 'flowDirection', 'animationSpeedFactor'].includes(link.targetProperty)
-                );
-                if (edgeData.dataPointLinks?.length === 0) {
-                    delete edgeData.dataPointLinks;
-                }
+              edgeData.dataPointLinks = (edgeData.dataPointLinks || []).filter(link =>
+                !['isEnergized', 'flowDirection', 'animationSpeedFactor'].includes(link.targetProperty)
+              );
+              if (edgeData.dataPointLinks?.length === 0) delete edgeData.dataPointLinks;
             }
             return { ...edge, data: edgeData };
           })
@@ -1671,21 +1779,30 @@ const SLDWidgetCore: React.FC<SLDWidgetCoreProps> = ({
           currentEdges.map(edge => {
             if (edge.id !== targetEdgeId) return edge;
             
+            // For single edge, we apply the full config from the dialog directly
             const newEdgeSpecificSettings: AnimationFlowConfig = {
                 animationType: config.animationType,
+                dynamicFlowType: config.dynamicFlowType,
+                dynamicMagnitudeDataPointId: config.dynamicMagnitudeDataPointId,
                 generationDataPointId: config.generationDataPointId,
                 usageDataPointId: config.usageDataPointId,
                 gridNetFlowDataPointId: config.gridNetFlowDataPointId,
                 speedMultiplier: config.speedMultiplier,
                 invertFlowDirection: config.invertFlowDirection,
+                minDynamicDuration: config.minDynamicDuration,
+                maxDynamicDuration: config.maxDynamicDuration,
+                dynamicSpeedBaseDivisor: config.dynamicSpeedBaseDivisor,
                 constantFlowDirection: config.constantFlowDirection,
                 constantFlowSpeed: config.constantFlowSpeed,
                 constantFlowActivationDataPointId: config.constantFlowActivationDataPointId,
+                minConstantDuration: config.minConstantDuration,
+                maxConstantDuration: config.maxConstantDuration,
             };
 
             let edgeData: CustomFlowEdgeData = { ...(edge.data || {}) };
             edgeData.animationSettings = newEdgeSpecificSettings;
 
+            // Clean up old dataPointLinks if new animation type is 'none' or settings are applied
             if (newEdgeSpecificSettings.animationType !== 'none') {
                 edgeData.dataPointLinks = (edgeData.dataPointLinks || []).filter(link =>
                     !['isEnergized', 'flowDirection', 'animationSpeedFactor'].includes(link.targetProperty)
@@ -1693,6 +1810,8 @@ const SLDWidgetCore: React.FC<SLDWidgetCoreProps> = ({
                 if (edgeData.dataPointLinks?.length === 0) {
                     delete edgeData.dataPointLinks;
                 }
+            } else { // animationType is 'none'
+                 edgeData.animationSettings = { animationType: 'none' }; // Ensure only this is set
             }
             return { ...edge, data: edgeData };
           })
