@@ -32,11 +32,13 @@ import {
     GeneratorNodeData, PLCNodeData, SensorNodeData, GenericDeviceNodeData, IsolatorNodeData, ATSNodeData,
     JunctionBoxNodeData, FuseNodeData, GaugeNodeData, BaseNodeData, SwitchNodeData, SwitchNodeConfig, // Added SwitchNodeConfig
     DataLabelNodeData, // Added DataLabelNodeData
-    AnimationFlowConfig as EdgeAnimationFlowConfig, GlobalSLDAnimationSettings // Kept EdgeAnimationFlowConfig
+    AnimationFlowConfig as EdgeAnimationFlowConfig, GlobalSLDAnimationSettings, // Kept EdgeAnimationFlowConfig
+    SLDLayout // Added SLDLayout import
 } from '@/types/sld';
 import { useAppStore } from '@/stores/appStore';
+import { toast } from 'sonner'; // Added toast import
 import { ComboboxOption, SearchableSelect } from './SearchableSelect';
-import { AVAILABLE_SLD_LAYOUT_IDS } from '@/config/constants';
+import { AVAILABLE_SLD_LAYOUT_IDS, LOCAL_STORAGE_KEY_PREFIX } from '@/config/constants'; // Added LOCAL_STORAGE_KEY_PREFIX
 import { Separator } from '@/components/ui/separator';
 
 // --- START: Target Property Definitions --- (Unchanged from original)
@@ -153,6 +155,147 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
     const [dataLinks, setDataLinks] = useState<DataPointLink[]>([]);
     const [activeTab, setActiveTab] = useState<string>("properties");
     const [devOverrideValues, setDevOverrideValues] = useState<Record<string, string>>({});
+    const [availableLayouts, setAvailableLayouts] = useState<Array<{ id: string; name: string }>>([]);
+
+    const formatLayoutName = (id: string, metaName?: string): string => {
+        if (metaName) {
+            return id.startsWith('sld_user_created_') ? `User: ${metaName}` : metaName;
+        }
+        // Default formatting for IDs if no meta.name
+        let name = id.replace(/^sld_user_created_/, 'User: ');
+        name = name.replace(/_/g, ' ');
+        // Capitalize first letter of each word for user created, or all for others
+        if (id.startsWith('sld_user_created_')) {
+            name = name.substring(0, 'User: '.length) + name.substring('User: '.length).split(' ')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+        } else {
+             name = name.split(' ')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+        }
+        // If it's a timestamp ID, try to make it more readable from name
+        if (id.startsWith('sld_user_created_') && metaName === undefined) {
+            const parts = id.split('_');
+            const timestamp = parts[parts.length -1];
+            if (!isNaN(Number(timestamp))) {
+                 // This part of name generation might be complex if metaName is truly missing for user layouts
+                 // For now, 'User: {timestamp}' might be acceptable if meta.name is missing
+                 name = `User: ${new Date(Number(timestamp)).toLocaleString()}`;
+            } else {
+                name = `User: ${parts.slice(3).join(' ')}`; // Fallback if not timestamp
+            }
+
+        }
+        return name;
+    };
+
+    const loadAvailableLayouts = useCallback(() => {
+        const dynamicLayouts: Array<{ id: string; name: string }> = [];
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith(LOCAL_STORAGE_KEY_PREFIX)) {
+                    const layoutId = key.substring(LOCAL_STORAGE_KEY_PREFIX.length);
+                    try {
+                        const item = localStorage.getItem(key);
+                        if (item) {
+                            const parsedLayout: SLDLayout = JSON.parse(item);
+                            dynamicLayouts.push({ id: layoutId, name: formatLayoutName(layoutId, parsedLayout.meta?.name) });
+                        }
+                    } catch (e) {
+                        console.warn(`Failed to parse SLD layout from localStorage for key ${key}:`, e);
+                        dynamicLayouts.push({ id: layoutId, name: formatLayoutName(layoutId) });
+                    }
+                }
+            }
+        } catch (e) {
+            console.error("Error accessing localStorage: ", e);
+            toast.error("Could not load layouts from storage. Functionality may be limited.");
+        }
+
+        const staticLayoutsFormatted = AVAILABLE_SLD_LAYOUT_IDS.map(id => ({
+            id,
+            name: formatLayoutName(id)
+        }));
+
+        const combinedMap = new Map<string, { id: string; name: string }>();
+        staticLayoutsFormatted.forEach(layout => combinedMap.set(layout.id, layout));
+        dynamicLayouts.forEach(layout => {
+            // Prioritize dynamic layout's name if it's more specific (e.g., has "User: " prefix from meta)
+            if (combinedMap.has(layout.id)) {
+                if (layout.name.startsWith("User: ") && !combinedMap.get(layout.id)!.name.startsWith("User: ")) {
+                    combinedMap.set(layout.id, layout);
+                } else if (!combinedMap.get(layout.id)!.name.startsWith("User: ") && layout.name.startsWith("User: ")) {
+                     // This case should ideally not happen if formatLayoutName is consistent
+                } else if (combinedMap.get(layout.id)!.name === formatLayoutName(layout.id)) { // if current is generic
+                    combinedMap.set(layout.id, layout);
+                }
+            } else {
+                combinedMap.set(layout.id, layout);
+            }
+        });
+
+        const combined = Array.from(combinedMap.values());
+        combined.sort((a, b) => a.name.localeCompare(b.name));
+        setAvailableLayouts(combined);
+    }, []);
+
+    const handleAddNewSLD = useCallback(() => {
+        const newSLDName = window.prompt("Enter a name for the new SLD layout:");
+        if (!newSLDName || newSLDName.trim() === "") {
+            toast.info("SLD creation cancelled: No name provided.");
+            return;
+        }
+
+        const newLayoutId = `sld_user_created_${Date.now()}`;
+
+        // Simplified placeholder node creation (can be expanded later)
+        const placeholderNode: Node<TextLabelNodeData> = {
+            id: 'placeholder-text-1',
+            type: 'textLabel', // Assuming 'textLabel' is a registered custom node type
+            position: { x: 50, y: 50 },
+            data: {
+                label: 'New SLD Layout', // Default label for the node itself
+                elementType: SLDElementType.TextLabel,
+                text: `Welcome to ${newSLDName}!`, // Text content of the label
+                styleConfig: {
+                    fontSize: '24px',
+                    color: '#888888', // Example color
+                },
+                isDrillable: false,
+            },
+        };
+
+        const newSLDLayout: SLDLayout = {
+            layoutId: newLayoutId,
+            meta: {
+                name: newSLDName,
+                description: `User created SLD layout: ${newSLDName}`,
+                version: '1.0',
+                author: 'User',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                globalAnimationSettings: undefined, // Or some default if applicable
+            },
+            nodes: [placeholderNode],
+            edges: [],
+            viewport: { x: 0, y: 0, zoom: 1 },
+        };
+
+        try {
+            localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + newLayoutId, JSON.stringify(newSLDLayout));
+            toast.success(`New SLD layout "${newSLDName}" created successfully!`);
+
+            // Update the available layouts (if this component manages that list, or trigger a refresh)
+            loadAvailableLayouts(); // Reload layouts to include the new one
+            handleSelectChange('subLayoutId', newLayoutId);
+
+        } catch (error) {
+            console.error("Failed to save new SLD layout to local storage:", error);
+            toast.error("Failed to create new SLD layout. Check console for details.");
+        }
+    }, [handleSelectChange, loadAvailableLayouts]);
 
     // Handler specifically for Gauge's valueDataPointLink's format changes
     const handleGaugeValueDataPointFormatChange = useCallback((field: keyof NonNullable<DataPointLink['format']>, value: any) => {
@@ -191,8 +334,12 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
 
     const currentTargetPropertyOptions = useMemo(() => getApplicableTargetProperties(selectedElement), [selectedElement]);
 
-    useEffect(() => { 
+    useEffect(() => {
+        if (isOpen) {
+            loadAvailableLayouts();
+        }
         if (isOpen && selectedElement) {
+            // loadAvailableLayouts(); // Call it here as well if selection change might affect available list (e.g. cannot link to self)
             const elementDataCopy = JSON.parse(JSON.stringify(selectedElement.data ?? {}));
             const initialFormData: Partial<CustomNodeData & CustomFlowEdgeData & { styleConfig?: TextNodeStyleConfig; notes?: string; assetId?: string; }> = { ...elementDataCopy, label: elementDataCopy.label || '' };
             
@@ -229,7 +376,7 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
         } else if (!isOpen) {
             setFormData({}); setDataLinks([]); setDevOverrideValues({});
         }
-    }, [selectedElement, isOpen]);
+    }, [selectedElement, isOpen, loadAvailableLayouts]); // Added loadAvailableLayouts
 
     const dataPointOptions = useMemo((): ComboboxOption[] => { 
         return Object.values(dataPoints).map(dp => ({
@@ -1091,7 +1238,42 @@ const SLDInspectorDialog: React.FC<SLDInspectorDialogProps> = ({
                                     {isNode(selectedElement) && ( 
                                         <ConfigCard title="Drilldown Link (Optional)" icon={FileKey}>
                                             <div className="flex items-center space-x-2 pt-1"> <Checkbox id="isDrillable" name="isDrillable" checked={!!formData.isDrillable} onCheckedChange={(checked) => handleCheckboxChange("isDrillable", checked)} className="h-4 w-4 accent-primary shrink-0" /> <Label htmlFor="isDrillable" className="text-sm font-normal cursor-pointer">Enable drilldown to another SLD layout?</Label> </div> 
-                                            {formData.isDrillable && ( <div className="space-y-1.5 pt-2 pl-6 border-l-2 border-primary/20 ml-2"> <Label htmlFor="subLayoutId" className="text-xs font-medium">Target Sub-Layout ID <span className="text-red-500">*</span></Label> <Select value={formData.subLayoutId || ''} onValueChange={(value) => handleSelectChange("subLayoutId", value)}> <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select target SLD layout..." /></SelectTrigger> <SelectContent>{AVAILABLE_SLD_LAYOUT_IDS.filter(id => selectedElement && id !== selectedElement.id /* Cannot drilldown to self if it had an ID matching layout */).map(id => (<SelectItem key={id} value={id} className="text-xs">{id.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</SelectItem>))}</SelectContent> </Select> {formData.subLayoutId && <p className="text-xs text-muted-foreground pt-0.5">Selected target: {formData.subLayoutId}</p>} {!formData.subLayoutId && <p className="text-xs text-destructive pt-0.5">Please select a target layout for drilldown.</p>} </div> )} 
+                                            {formData.isDrillable && (
+                                                <div className="space-y-3 pt-2 pl-6 border-l-2 border-primary/20 ml-2">
+                                                    <div>
+                                                        <Label htmlFor="subLayoutId" className="text-xs font-medium">Target Sub-Layout ID <span className="text-red-500">*</span></Label>
+                                                        <Select value={formData.subLayoutId || ''} onValueChange={(value) => handleSelectChange("subLayoutId", value)}>
+                                                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select target SLD layout..." /></SelectTrigger>
+                                                            <SelectContent>
+                                                                {availableLayouts.filter(layout => {
+                                                                    // Basic filtering: cannot drilldown to self if selectedElement.id is a layout ID.
+                                                                    // This logic might need refinement based on how selectedElement.id relates to layout IDs.
+                                                                    // For now, if selectedElement.id matches a layout.id, filter it out.
+                                                                    if (selectedElement && selectedElement.id === layout.id) {
+                                                                        return false;
+                                                                    }
+                                                                    return true;
+                                                                }).map(layout => (
+                                                                    <SelectItem key={layout.id} value={layout.id} className="text-xs">
+                                                                        {layout.name}
+                                                                    </SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                        {formData.subLayoutId && <p className="text-xs text-muted-foreground pt-0.5">Selected target: {availableLayouts.find(l => l.id === formData.subLayoutId)?.name || formData.subLayoutId}</p>}
+                                                        {!formData.subLayoutId && <p className="text-xs text-destructive pt-0.5">Please select a target layout for drilldown.</p>}
+                                                    </div>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-8 text-xs w-full"
+                                                        onClick={handleAddNewSLD}
+                                                    >
+                                                        <PlusCircle className="h-3.5 w-3.5 mr-2" />
+                                                        Add New SLD Layout
+                                                    </Button>
+                                                </div>
+                                            )}
                                         </ConfigCard> 
                                     )}
                                 </TabsContent>
