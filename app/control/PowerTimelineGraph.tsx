@@ -186,12 +186,155 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
     const [isForcedLiveUiButtonActive, setIsForcedLiveUiButtonActive] = useState(false);
     const [visibleLines, setVisibleLines] = useState<Record<ActualLineKey, boolean>>({ generation: true, usage: true, gridFeed: true });
     const [historicalTimeOffsetMs, setHistoricalTimeOffsetMs] = useState(0);
+    const [isLoadingHistorical, setIsLoadingHistorical] = useState(false);
+    const [historicalError, setHistoricalError] = useState<string | null>(null);
+    const fetchedIntervalsRef = useRef<Array<{start: number, end: number}>>([]);
+
+
+    const loadHistoricalDataIntoBuffer = useCallback(async (viewStartTime: number, viewEndTime: number) => {
+        if (!dpsAreConfigured) return; // Should be checked by caller, but good safeguard
+
+        setIsLoadingHistorical(true);
+        setHistoricalError(null);
+
+        const alreadyFetchedSufficiently = fetchedIntervalsRef.current.some(
+            interval => viewStartTime >= interval.start && viewEndTime <= interval.end
+        );
+
+        if (alreadyFetchedSufficiently) {
+            // console.log("Skipping fetch, interval already covered:", new Date(viewStartTime).toISOString(), new Date(viewEndTime).toISOString());
+            setIsLoadingHistorical(false);
+            // Force re-evaluation of chart data by existing mechanisms if needed
+            // This might involve triggering a chartData update if dataBufferRef content is sufficient
+            // For now, rely on the main useEffect to re-filter dataBufferRef.current
+            setAnimationKey(Date.now()); // Force chart update if needed
+            return;
+        }
+
+        const primaryGenId = generationDpIds.length > 0 ? generationDpIds[0] : null;
+        const primaryUsageId = usageDpIds.length > 0 ? usageDpIds[0] : null;
+        const primaryExportId = exportMode === 'manual' && exportDpIds.length > 0 ? exportDpIds[0] : null;
+
+        const nodesToFetchConf: { type: 'gen' | 'usage' | 'export'; dpId: string }[] = [];
+        if (primaryGenId) nodesToFetchConf.push({ type: 'gen', dpId: primaryGenId });
+        if (primaryUsageId) nodesToFetchConf.push({ type: 'usage', dpId: primaryUsageId });
+        if (primaryExportId) nodesToFetchConf.push({ type: 'export', dpId: primaryExportId });
+
+        if (nodesToFetchConf.length === 0) {
+            setIsLoadingHistorical(false);
+            return;
+        }
+
+        try {
+            const fetchedDataPromises = nodesToFetchConf.map(async (nodeConf) => {
+                const dpConfig = allPossibleDataPoints.find(dp => dp.id === nodeConf.dpId);
+                if (!dpConfig) {
+                    console.warn(`DataPoint configuration not found for id: ${nodeConf.dpId}`);
+                    return { type: nodeConf.type, data: [] };
+                }
+
+                const params = new URLSearchParams({
+                    nodeId: dpConfig.nodeId, // Use the actual OPC UA nodeId
+                    startTime: new Date(viewStartTime).toISOString(),
+                    endTime: new Date(viewEndTime).toISOString(),
+                });
+
+                const response = await fetch(`/api/get-node-data?${params.toString()}`);
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ message: `Failed to fetch historical data for ${dpConfig.nodeId}` }));
+                    console.error(`Error fetching history for ${dpConfig.nodeId}: ${errorData.message || response.statusText}`);
+                    return { type: nodeConf.type, data: [] };
+                }
+                const rawData: Array<{ timestamp: string; value: number }> = await response.json();
+                return {
+                    type: nodeConf.type,
+                    data: rawData.map(d => ({
+                        timestamp: new Date(d.timestamp).getTime(),
+                        value: d.value,
+                        unit: dpConfig.unit,
+                        factor: dpConfig.factor,
+                    })),
+                };
+            });
+
+            const results = await Promise.all(fetchedDataPromises);
+
+            const combinedPoints: Record<number, { gen: number, usage: number, exp: number, ts: number }> = {};
+
+            results.forEach(result => {
+                const dpConfig = allPossibleDataPoints.find(dp => dp.id === (nodesToFetchConf.find(n=>n.type === result.type)?.dpId));
+                if (!dpConfig) return;
+
+                result.data.forEach(point => {
+                    if (!combinedPoints[point.timestamp]) {
+                        combinedPoints[point.timestamp] = { ts: point.timestamp, gen: 0, usage: 0, exp: 0 };
+                    }
+                    const valueInWatts = convertToWatts(point.value * (point.factor || 1), point.unit);
+                    const valueInTargetUnit = convertFromWatts(valueInWatts, CHART_TARGET_UNIT);
+
+                    if (result.type === 'gen') {
+                        combinedPoints[point.timestamp].gen += valueInTargetUnit;
+                    } else if (result.type === 'usage') {
+                        combinedPoints[point.timestamp].usage += valueInTargetUnit;
+                    } else if (result.type === 'export') {
+                        combinedPoints[point.timestamp].exp += valueInTargetUnit;
+                    }
+                });
+            });
+
+            const newChartDataPoints = Object.values(combinedPoints).map(p => {
+                let finalGridFeed = p.exp; // Use directly fetched export if available (manual mode)
+                if (exportMode === 'auto' || !primaryExportId) { // If auto mode or no specific export ID
+                    finalGridFeed = p.gen - p.usage;
+                }
+                return processDataPoint(p.ts, p.gen, p.usage, finalGridFeed);
+            });
+
+            const existingTimestamps = new Set(dataBufferRef.current.map(p => p.timestamp));
+            const uniqueNewPoints = newChartDataPoints.filter(p => !existingTimestamps.has(p.timestamp));
+
+            dataBufferRef.current = [...dataBufferRef.current, ...uniqueNewPoints];
+            dataBufferRef.current.sort((a, b) => a.timestamp - b.timestamp);
+
+            // Prune buffer if it gets too large, focusing on maintaining relevant historical window
+            // This simple prune keeps last N points, more sophisticated might be needed
+            const MAX_BUFFER_POINTS = MAX_POINTS_FOR_RECHARTS * 10; // Keep more than display
+            if (dataBufferRef.current.length > MAX_BUFFER_POINTS) {
+                 dataBufferRef.current = dataBufferRef.current.slice(-MAX_BUFFER_POINTS);
+            }
+
+            const newFetchedInterval = { start: viewStartTime, end: viewEndTime };
+            const mergedIntervals = fetchedIntervalsRef.current.reduce((acc, interval) => {
+                // Basic merge, can be improved for overlapping/adjacent intervals
+                if (newFetchedInterval.start <= interval.end && newFetchedInterval.end >= interval.start) {
+                    newFetchedInterval.start = Math.min(newFetchedInterval.start, interval.start);
+                    newFetchedInterval.end = Math.max(newFetchedInterval.end, interval.end);
+                } else {
+                    acc.push(interval);
+                }
+                return acc;
+            }, [] as Array<{start: number, end: number}>);
+            mergedIntervals.push(newFetchedInterval);
+            fetchedIntervalsRef.current = mergedIntervals.sort((a,b) => a.start - b.start);
+
+            setAnimationKey(Date.now());
+            if (!isGraphReady && dataBufferRef.current.length > 0) setIsGraphReady(true);
+
+        } catch (err) {
+            console.error("Failed to load historical data:", err);
+            setHistoricalError(err instanceof Error ? err.message : String(err));
+        } finally {
+            setIsLoadingHistorical(false);
+        }
+    }, [generationDpIds, usageDpIds, exportDpIds, exportMode, CHART_TARGET_UNIT, allPossibleDataPoints, processDataPoint, isGraphReady, dpsAreConfigured]);
 
     const previousTimeScaleRef = useRef(timeScale);
     useEffect(() => {
       if (previousTimeScaleRef.current !== timeScale) {
         setIsForcedLiveUiButtonActive(false);
         setHistoricalTimeOffsetMs(0);
+        fetchedIntervalsRef.current = []; // Reset fetched intervals on timescale change
+        dataBufferRef.current = []; // Clear buffer on timescale change to force re-fetch or live
         previousTimeScaleRef.current = timeScale;
         setAnimationKey(Date.now());
       }
@@ -285,6 +428,20 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
 
     useEffect(() => {
         const dpsConfigured = generationDpIds.length > 0 && usageDpIds.length > 0;
+
+        const { durationMs: currentDurationMs } = timeScaleConfig[timeScale];
+        const currentViewEndTime = Date.now() - historicalTimeOffsetMs;
+        const currentViewStartTime = currentViewEndTime - currentDurationMs;
+
+        // Determine if data for the current view window needs to be fetched
+        const needsFetch = historicalTimeOffsetMs > 0 && dpsConfigured && !effectiveUseDemoData &&
+            !fetchedIntervalsRef.current.some(interval => currentViewStartTime >= interval.start && currentViewEndTime <= interval.end);
+
+        if (needsFetch) {
+            // console.log(`Historical fetch triggered for window: ${new Date(currentViewStartTime).toISOString()} to ${new Date(currentViewEndTime).toISOString()}`);
+            loadHistoricalDataIntoBuffer(currentViewStartTime, currentViewEndTime);
+        }
+
 
         const aggregateData = (rawData: ChartDataPoint[], intervalMs: number): ChartDataPoint[] => {
             if (!intervalMs || rawData.length === 0) return rawData;
@@ -684,18 +841,50 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
     if (!effectiveUseDemoData && !dpsAreConfigured) {
         return <div className="flex items-center justify-center h-full text-muted-foreground p-4 text-center">Please configure Generation and Usage data points.</div>;
     }
+
+    if (isLoadingHistorical) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4 space-y-2">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <span>Loading historical data...</span>
+            </div>
+        );
+    }
+
+    if (historicalError) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-red-500 p-4 space-y-2">
+                <AlertTriangleIcon className="h-8 w-8" />
+                <span>Error loading historical data:</span>
+                <span className="text-xs max-w-md text-center">{historicalError}</span>
+                 <Button onClick={() => {
+                    setHistoricalError(null);
+                    const { durationMs } = timeScaleConfig[timeScale];
+                    const currentViewEndTime = Date.now() - historicalTimeOffsetMs;
+                    const currentViewStartTime = currentViewEndTime - durationMs;
+                    // Ensure fetchedIntervalsRef doesn't block retry for the current exact window
+                    fetchedIntervalsRef.current = fetchedIntervalsRef.current.filter(
+                        interval => !(currentViewStartTime >= interval.start && currentViewEndTime <= interval.end)
+                    );
+                    loadHistoricalDataIntoBuffer(currentViewStartTime, currentViewEndTime);
+                 }} variant="outline" size="sm">Try Again</Button>
+            </div>
+        );
+    }
+
     if (!isGraphReady && isCurrentlyDrawingLiveOrDemo && chartData.length === 0 && dataBufferRef.current.length === 0 && dpsAreConfigured) {
         return <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4 space-y-2"><Loader2 className="h-8 w-8 animate-spin text-primary" /><span>Waiting for initial data...</span></div>;
     }
-    if (isGraphReady && !isCurrentlyDrawingLiveOrDemo && chartData.length === 0 && dpsAreConfigured) {
+    if (isGraphReady && !isCurrentlyDrawingLiveOrDemo && historicalTimeOffsetMs > 0 && chartData.length === 0 && dpsAreConfigured && !isLoadingHistorical) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4 space-y-2">
                 <AlertTriangleIcon className="h-8 w-8 text-amber-500" />
-                <span>No data available for this time period.</span>
+                <span>No data available for this historical period.</span>
                 <span>Try adjusting the time scale or navigating.</span>
             </div>
         );
     }
+
 
     return (
     <TooltipProvider delayDuration={150}>

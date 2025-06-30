@@ -142,6 +142,36 @@ export const useWebSocket = () => {
                     }
                     if (hasValidOpcData) {
                         useAppStore.getState().updateOpcUaNodeValues(opcDataPayload);
+
+                        // Also send to backend for DB logging
+                        const now = new Date();
+                        for (const key in opcDataPayload) {
+                            if (Object.prototype.hasOwnProperty.call(opcDataPayload, key)) {
+                                const value = opcDataPayload[key];
+                                // Fire and forget a POST request to the backend
+                                fetch('/api/log-node-data', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                    },
+                                    body: JSON.stringify({
+                                        timestamp: now.toISOString(),
+                                        nodeId: key,
+                                        value: value, // API route will handle type conversion
+                                    }),
+                                }).then(response => {
+                                    if (!response.ok) {
+                                        response.json().then(err => {
+                                            console.warn(`API: Failed to log data for ${key}: ${err.message || response.statusText}`);
+                                        }).catch(() => {
+                                            console.warn(`API: Failed to log data for ${key}: ${response.statusText} (and no JSON error body)`);
+                                        });
+                                    }
+                                }).catch(error => {
+                                    console.error(`API: Error sending data for ${key} to backend:`, error);
+                                });
+                            }
+                        }
                     } else {
                         // console.warn("WebSocket: Received object data without 'type' field and no valid OPC-UA primitive values:", data);
                     }
