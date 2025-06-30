@@ -1,71 +1,49 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDBConnection, initializeDBSchema } from '@/lib/duckdbClient'; // Assuming duckdbClient.ts is in lib
-
-// Flag to ensure schema is initialized only once
-let dbInitialized = false;
-
-async function ensureDbInitialized() {
-    if (!dbInitialized) {
-        try {
-            await initializeDBSchema();
-            dbInitialized = true;
-            console.log('Database schema initialized successfully from API route get-node-data.');
-        } catch (error) {
-            console.error('Failed to initialize database schema from API route get-node-data:', error);
-            throw new Error('Database initialization failed');
-        }
-    }
-}
+import { getNodeDataInRange, ensureSchemaInitialized, NodeDataPoint } from '@/lib/duckdbClient';
 
 export async function GET(request: NextRequest) {
     try {
-        await ensureDbInitialized();
+        await ensureSchemaInitialized(); // Ensures DB and tables are ready
 
         const { searchParams } = new URL(request.url);
-        const nodeId = searchParams.get('nodeId');
-        const startTime = searchParams.get('startTime'); // ISO 8601 string
-        const endTime = searchParams.get('endTime');     // ISO 8601 string
-        // const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit') as string, 10) : 1000; // Default limit
+        const nodeId = searchParams.get('nodeId'); // This is the OPC UA Node ID
+        const startTimeStr = searchParams.get('startTime'); // ISO 8601 string
+        const endTimeStr = searchParams.get('endTime');     // ISO 8601 string
+        const limitStr = searchParams.get('limit');
 
         if (!nodeId) {
             return NextResponse.json({ message: 'Missing required parameter: nodeId' }, { status: 400 });
         }
-        if (!startTime || !endTime) {
+        if (!startTimeStr || !endTimeStr) {
             return NextResponse.json({ message: 'Missing required parameters: startTime and endTime' }, { status: 400 });
         }
 
-        const startDate = new Date(startTime);
-        const endDate = new Date(endTime);
+        const startTime = new Date(startTimeStr);
+        const endTime = new Date(endTimeStr);
 
-        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
             return NextResponse.json({ message: 'Invalid startTime or endTime format. Please use ISO 8601 format.' }, { status: 400 });
         }
 
-        const connection = await getDBConnection();
-        try {
-            // Ensure TIMESTAMPTZ is correctly handled in query. DuckDB uses ISO 8601 for TIMESTAMPTZ literals.
-            const query = `
-                SELECT timestamp, value
-                FROM node_data
-                WHERE node_id = ? AND timestamp >= ? AND timestamp <= ?
-                ORDER BY timestamp ASC;
-            `;
-            // Potentially add LIMIT ? and pass limit if pagination/load more is needed
-
-            const results = await connection.all(query, nodeId, startDate.toISOString(), endDate.toISOString());
-
-            // The node-api for DuckDB should return Date objects for TIMESTAMPTZ
-            // and numbers for DOUBLE. Let's ensure the format is what the frontend expects.
-            const formattedResults = results.map(row => ({
-                // timestamp: (row.timestamp as Date).toISOString(), // Ensure ISO string if not already
-                timestamp: row.timestamp, // Keep as Date object if possible, or convert to desired format
-                value: row.value,
-            }));
-
-            return NextResponse.json(formattedResults, { status: 200 });
-        } finally {
-            await connection.close();
+        let limit: number | undefined = undefined;
+        if (limitStr) {
+            const parsedLimit = parseInt(limitStr, 10);
+            if (!isNaN(parsedLimit) && parsedLimit > 0) {
+                limit = parsedLimit;
+            } else {
+                return NextResponse.json({ message: 'Invalid limit format. Must be a positive integer.' }, { status: 400 });
+            }
         }
+
+        const results: NodeDataPoint[] = await getNodeDataInRange(nodeId, startTime, endTime, limit);
+
+        // Transform Date objects to ISO strings for JSON serialization, as Next.js default might vary.
+        const formattedResults = results.map(row => ({
+            timestamp: row.timestamp.toISOString(),
+            value: row.value,
+        }));
+
+        return NextResponse.json(formattedResults, { status: 200 });
     } catch (error) {
         console.error('Error in /api/get-node-data:', error);
         let errorMessage = 'Internal Server Error';

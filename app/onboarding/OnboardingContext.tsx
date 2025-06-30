@@ -4,9 +4,12 @@ import React, { createContext, useContext, useState, ReactNode, Dispatch, SetSta
 import { AppOnboardingData, saveOnboardingData as saveToIDB, clearOnboardingData as clearFromIDB } from '@/lib/idb-store';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
-import { DataPointConfig, dataPoints as actualDefaultDataPointsFromConfig } from '@/config/dataPoints';
+import { DataPointConfig } from '@/config/dataPoints'; // Keep type, remove data import
 import { APP_NAME, OPC_UA_ENDPOINT_OFFLINE, PLANT_CAPACITY, PLANT_LOCATION, PLANT_NAME as initialPlantNameFromConst, PLANT_TYPE } from '@/config/constants';
 import { Sparkles } from 'lucide-react';
+// Import the DB client type for data points and a helper to transform it
+import { DataPointDefinitionDB } from '@/lib/duckdbClient'; // Assuming type export
+import * as lucideIcons from 'lucide-react'; // For icon mapping
 
 export type OnboardingStep = 0 | 1 | 2 | 3 | 4;
 export type SaveStatus = 'idle' | 'saving' | 'success' | 'error';
@@ -18,7 +21,7 @@ interface FullConfigFile {
     plantName?: string;
     plantLocation?: string;
     plantType?: string;
-    configuredDataPoints: PartialDataPointFromFile[];
+    configuredDataPoints: PartialDataPointFromFile[]; // This type might need to align with DataPointDefinitionDB if files directly map to DB structure
 }
 
 export interface OnboardingConfigData {
@@ -28,7 +31,7 @@ export interface OnboardingConfigData {
   plantCapacity?: string;
   opcUaEndpointOffline?: string;
   appName?: string;
-  configuredDataPoints?: DataPointConfig[];
+  configuredDataPoints?: DataPointConfig[]; // This is UI type with IconComponent
 }
 
 export interface OnboardingContextType {
@@ -41,30 +44,67 @@ export interface OnboardingContextType {
   resetOnboardingData: () => Promise<void>;
   configData: OnboardingConfigData;
   updateConfigData: (partialData: Partial<OnboardingConfigData>) => void;
-  isLoading: boolean;
-  isStepLoading: boolean; // New state for step-specific loading
-  setIsStepLoading: (loading: boolean) => void; // Setter
+  isLoading: boolean; // General loading for async context operations like initial fetch or final save
+  isStepLoading: boolean;
+  setIsStepLoading: (loading: boolean) => void;
   totalSteps: number;
   onboardingData: PartialOnboardingData;
   updateOnboardingData: (data: PartialOnboardingData) => void;
-  defaultDataPoints: DataPointConfig[];
-  configuredDataPoints: DataPointConfig[];
+  defaultDataPoints: DataPointConfig[]; // UI type
+  configuredDataPoints: DataPointConfig[]; // UI type
   setConfiguredDataPoints: Dispatch<SetStateAction<DataPointConfig[]>>;
-  setPlantDetails: (details: Partial<FullConfigFile>) => void;
+  setPlantDetails: (details: Partial<FullConfigFile>) => void; // This might also need to save to `constants` DB
 }
 
 const OnboardingContext = createContext<OnboardingContextType | undefined>(undefined);
 
-const sourceDefaultDataPoints: DataPointConfig[] = JSON.parse(JSON.stringify(actualDefaultDataPointsFromConfig));
+// Helper to get Lucide icon component from string name
+const getIconComponentFromString = (iconName?: string | null): IconComponentType => {
+    if (!iconName) return Sparkles; // Default icon
+    const icons = lucideIcons as unknown as Record<string, IconComponentType>;
+    const iconKey = Object.keys(icons).find(key => key.toLowerCase() === iconName.toLowerCase().replace(/icon$/i, ''));
+    return iconKey ? icons[iconKey] : Sparkles;
+};
+
+// Helper to transform DB definition to UI DataPointConfig
+const transformDbDefToUiConfig = (dbDef: DataPointDefinitionDB): DataPointConfig => {
+    return {
+        id: dbDef.id,
+        name: dbDef.name,
+        nodeId: dbDef.opcua_node_id,
+        label: dbDef.label || dbDef.name,
+        dataType: dbDef.data_type as DataPointConfig['dataType'],
+        uiType: (dbDef.ui_type || 'display') as DataPointConfig['uiType'],
+        icon: getIconComponentFromString(dbDef.icon_name),
+        unit: dbDef.unit || undefined,
+        min: dbDef.min_val !== null && dbDef.min_val !== undefined ? Number(dbDef.min_val) : undefined,
+        max: dbDef.max_val !== null && dbDef.max_val !== undefined ? Number(dbDef.max_val) : undefined,
+        description: dbDef.description || undefined,
+        category: dbDef.category || 'General',
+        factor: dbDef.factor !== null && dbDef.factor !== undefined ? Number(dbDef.factor) : undefined,
+        // Assuming DataPointConfig doesn't have precision, decimal_places, enumSet directly,
+        // but they are part of ExtendedDataPointConfig used in steps.
+        // If DataPointConfig needs them, map them here.
+        // For now, keeping it aligned with the base DataPointConfig.
+        phase: (dbDef.phase || undefined) as DataPointConfig['phase'],
+        isSinglePhase: typeof dbDef.is_single_phase === 'boolean' ? dbDef.is_single_phase : undefined,
+        threePhaseGroup: dbDef.three_phase_group || undefined,
+        notes: dbDef.notes || undefined,
+        // Fields like 'precision', 'isWritable', 'decimalPlaces', 'enumSet' from DataPointDefinitionDB
+        // would be mapped if DataPointConfig included them or if an ExtendedDataPointConfig was used here.
+    };
+};
+
 
 export const OnboardingProvider = ({ children }: { children: ReactNode }) => {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState<OnboardingStep>(0);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [isStepLoading, setIsStepLoading] = useState(false);
+  const [isLoadingContext, setIsLoadingContext] = useState(true); // For initial data load
 
   const [onboardingData, setOnboardingData] = useState<PartialOnboardingData>({
-    plantName: initialPlantNameFromConst,
+    plantName: initialPlantNameFromConst, // These can also be fetched from DB `constants` table
     plantLocation: PLANT_LOCATION,
     plantType: PLANT_TYPE,
     plantCapacity: PLANT_CAPACITY,
@@ -72,11 +112,67 @@ export const OnboardingProvider = ({ children }: { children: ReactNode }) => {
     appName: APP_NAME,
   });
 
-  const [configuredDataPoints, setConfiguredDataPoints] = useState<DataPointConfig[]>(
-    () => JSON.parse(JSON.stringify(sourceDefaultDataPoints))
-  );
+  const [configuredDataPoints, setConfiguredDataPoints] = useState<DataPointConfig[]>([]);
+  const [defaultDataPoints, setDefaultDataPoints] = useState<DataPointConfig[]>([]);
 
-  const totalSteps = 5; // This seems fixed for the defined steps
+  // Fetch initial data from DB
+  useEffect(() => {
+    const fetchInitialConfigs = async () => {
+      setIsLoadingContext(true);
+      try {
+        const response = await fetch('/api/datapoints');
+        if (!response.ok) {
+          console.error("Failed to fetch initial datapoints from API");
+          // Fallback to empty or some hardcoded minimum if API fails, or throw error
+          setDefaultDataPoints([]);
+          setConfiguredDataPoints([]);
+          toast.error("Failed to load initial configurations.");
+          return;
+        }
+        const dbDefinitions = await response.json() as DataPointDefinitionDB[];
+        const uiConfigs = dbDefinitions.map(transformDbDefToUiConfig);
+
+        setDefaultDataPoints(JSON.parse(JSON.stringify(uiConfigs)));
+        setConfiguredDataPoints(uiConfigs);
+
+        // Fetch constants
+        const constantsResponse = await fetch('/api/constants');
+        if (!constantsResponse.ok) {
+            console.error("Failed to fetch initial constants from API");
+            toast.error("Failed to load initial app constants.");
+            // Keep hardcoded defaults if API fails
+        } else {
+            const dbConstants = await constantsResponse.json() as ConstantDB[];
+            const constantsMap = new Map(dbConstants.map(c => [c.key, c.value]));
+
+            setOnboardingData(prev => ({
+                ...prev,
+                plantName: constantsMap.get('PLANT_NAME') || prev.plantName,
+                plantLocation: constantsMap.get('PLANT_LOCATION') || prev.plantLocation,
+                plantType: constantsMap.get('PLANT_TYPE') || prev.plantType,
+                plantCapacity: constantsMap.get('PLANT_CAPACITY') || prev.plantCapacity,
+                opcUaEndpointOffline: (constantsMap.get('OPC_UA_ENDPOINT_OFFLINE') || prev.opcUaEndpointOffline!)?.replace('opc.tcp://', ''),
+                appName: constantsMap.get('APP_NAME') || prev.appName,
+                // Add any other constants you want to load into onboardingData
+            }));
+            console.log("App constants loaded from database into OnboardingContext.");
+        }
+
+      } catch (error) {
+        console.error("Error fetching initial data for context:", error);
+        setDefaultDataPoints([]);
+        setConfiguredDataPoints([]);
+        // Keep hardcoded defaults for onboardingData on error
+        toast.error("Error loading initial configurations from database.");
+      } finally {
+        setIsLoadingContext(false);
+      }
+    };
+    fetchInitialConfigs();
+  }, []); // Empty dependency array ensures this runs once on mount
+
+
+  const totalSteps = 4; // Welcome, Plant, DatapointManagement, Review
 
   const updateOnboardingData = useCallback((data: PartialOnboardingData) => {
     setOnboardingData((prev) => ({ ...prev, ...data }));

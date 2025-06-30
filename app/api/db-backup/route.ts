@@ -1,57 +1,57 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDBInstance, initializeDBSchema } from '@/lib/duckdbClient';
+import { getDBInstance, ensureSchemaInitialized, DATABASE_PATH } from '@/lib/duckdbClient';
 import path from 'path';
 import fs from 'fs';
 import { format } from 'date-fns';
 
-// Flag to ensure schema is initialized only once - might be redundant if other APIs are hit first
-let dbInitialized = false;
-async function ensureDbInitialized() {
-    if (!dbInitialized) {
-        try {
-            await initializeDBSchema(); // Ensure tables exist, though EXPORT doesn't strictly need it if DB exists
-            dbInitialized = true;
-            console.log('Database schema check/init from db-backup.');
-        } catch (error) {
-            console.error('Failed to initialize database schema from db-backup:', error);
-            throw new Error('Database initialization failed');
-        }
-    }
-}
-
 const backupBaseDir = path.resolve(process.cwd(), 'data', 'backups');
 
-export async function POST(request: NextRequest) { // Using POST for action
+export async function POST(request: NextRequest) {
     try {
-        await ensureDbInitialized();
+        // Ensure schema is initialized more for the getDBInstance call to be safe,
+        // EXPORT itself doesn't strictly need tables to be pre-defined if DB file exists.
+        await ensureSchemaInitialized();
 
         if (!fs.existsSync(backupBaseDir)) {
             fs.mkdirSync(backupBaseDir, { recursive: true });
         }
 
-        const instance = await getDBInstance(); // Get the main DB instance
+        // It's crucial that getDBInstance() returns the instance connected to the correct DB file.
+        // DATABASE_PATH from duckdbClient should point to the live database file.
+        const instance = await getDBInstance();
         const connection = await instance.connect();
 
         const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
-        const backupDirName = `backup_${timestamp}`;
+        const backupDirName = `backup_all_tables_${timestamp}`; // Indicate it's a full backup
         const backupPath = path.resolve(backupBaseDir, backupDirName);
 
-        try {
-            // EXPORT DATABASE specifies a directory. DuckDB will manage files within it.
-            await connection.run(`EXPORT DATABASE '${backupPath}' (FORMAT PARQUET);`);
-            // Parquet is a good, efficient format for analytical data.
-            // Alternatively, use (FORMAT CSV) or omit FORMAT for DuckDB's internal binary format.
+        // Ensure the specific backup target directory does not already exist to avoid EXPORT error
+        if (fs.existsSync(backupPath)) {
+            // This case should be rare due to timestamp, but good to handle
+            return NextResponse.json({ message: `Backup directory ${backupPath} already exists. Please try again.` }, { status: 409 });
+        }
 
-            return NextResponse.json({ message: `Database backup successful. Exported to directory: ${backupPath}` }, { status: 200 });
+        try {
+            console.log(`Attempting to export database to: ${backupPath}`);
+            // EXPORT DATABASE specifies a directory. DuckDB will manage files within it.
+            // Default format is binary, which is efficient for DuckDB to DuckDB backup/restore.
+            // Using (FORMAT PARQUET) is also a good option for interoperability.
+            await connection.run(`EXPORT DATABASE '${backupPath}';`);
+
+            console.log(`Database export successful to directory: ${backupPath}`);
+            return NextResponse.json({ message: `Database backup successful. Exported to directory: ${backupDirName}`, backupDir: backupDirName }, { status: 200 });
         } catch (exportError) {
             console.error('Error during database export:', exportError);
             // Attempt to clean up partially created backup directory if export fails
             if (fs.existsSync(backupPath)) {
-                fs.rmSync(backupPath, { recursive: true, force: true });
+                try {
+                    fs.rmSync(backupPath, { recursive: true, force: true });
+                } catch (cleanupError) {
+                    console.error(`Failed to cleanup partial backup directory ${backupPath}:`, cleanupError);
+                }
             }
-            throw exportError; // Re-throw to be caught by outer try-catch
-        }
-        finally {
+            throw exportError;
+        } finally {
             await connection.close();
         }
     } catch (error) {

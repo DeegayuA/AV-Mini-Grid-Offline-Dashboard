@@ -206,6 +206,24 @@ const AdminPage: React.FC = () => {
         disabled: true,
         colorClass: "amber",
       },
+      {
+        title: "Data Point Definitions",
+        description: "Manage OPC UA data point configurations, metadata, and UI mappings.",
+        icon: Settings, // Or a more specific icon like ListTree or DatabaseZap
+        buttonText: "Manage Data Points",
+        onClick: () => router.push('/admin/datapoints'),
+        disabled: false,
+        colorClass: "teal",
+      },
+      {
+        title: "Application Constants",
+        description: "Configure global application settings and constants stored in the database.",
+        icon: UserCog, // Or SlidersHorizontal or other appropriate icon
+        buttonText: "Manage Constants",
+        onClick: () => router.push('/admin/constants'),
+        disabled: false,
+        colorClass: "cyan",
+      }
     ];
 
     return (

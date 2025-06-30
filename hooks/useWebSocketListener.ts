@@ -145,10 +145,10 @@ export const useWebSocket = () => {
 
                         // Also send to backend for DB logging
                         const now = new Date();
-                        for (const key in opcDataPayload) {
+                        for (const key in opcDataPayload) { // key here is the OPC UA Node ID
                             if (Object.prototype.hasOwnProperty.call(opcDataPayload, key)) {
                                 const value = opcDataPayload[key];
-                                // Fire and forget a POST request to the backend
+
                                 fetch('/api/log-node-data', {
                                     method: 'POST',
                                     headers: {
@@ -156,19 +156,19 @@ export const useWebSocket = () => {
                                     },
                                     body: JSON.stringify({
                                         timestamp: now.toISOString(),
-                                        nodeId: key,
-                                        value: value, // API route will handle type conversion
+                                        nodeId: key, // This is the OPC UA Node ID string
+                                        value: value,
                                     }),
                                 }).then(response => {
                                     if (!response.ok) {
                                         response.json().then(err => {
-                                            console.warn(`API: Failed to log data for ${key}: ${err.message || response.statusText}`);
+                                            console.warn(`API Error (log-node-data) for ${key}: ${err.message || response.statusText}`);
                                         }).catch(() => {
-                                            console.warn(`API: Failed to log data for ${key}: ${response.statusText} (and no JSON error body)`);
+                                            console.warn(`API Error (log-node-data) for ${key}: ${response.statusText} (and no JSON error body)`);
                                         });
                                     }
                                 }).catch(error => {
-                                    console.error(`API: Error sending data for ${key} to backend:`, error);
+                                    console.error(`Network Error sending data for ${key} to /api/log-node-data:`, error);
                                 });
                             }
                         }

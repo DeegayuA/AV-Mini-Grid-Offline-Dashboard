@@ -320,6 +320,68 @@ export default function DatapointDiscoveryStep() { // Renamed component
         }
     ]);
 
+    // const [dbDataPoints, setDbDataPoints] = useState<ExtendedDataPointConfig[]>([]); // No longer needed here, context provides
+    // const [isFetchingDbPoints, setIsFetchingDbPoints] = useState(true); // No longer needed here
+    const [localChanges, setLocalChanges] = useState<ExtendedDataPointConfig[]>([]); // For points not yet saved to DB / or transient UI changes
+
+
+    // Helper function to transform DB data point to UI data point (can be kept if used elsewhere, or removed if context does all transformation)
+    // For now, keeping it as it might be used if this component directly fetches/transforms for some reason,
+    // but primary data comes from context.
+    const transformDbToUiDataPoint = useCallback((dbDp: DataPointDefinitionDB): ExtendedDataPointConfig => {
+        const iconComponent = getIconComponent(dbDp.icon_name || 'Sigma'); // Fallback icon
+        return {
+            id: dbDp.id,
+            name: dbDp.name,
+            nodeId: dbDp.opcua_node_id,
+            label: dbDp.label || dbDp.name,
+            dataType: dbDp.data_type as DataPointConfig['dataType'],
+            uiType: (dbDp.ui_type || 'display') as DataPointConfig['uiType'],
+            icon: iconComponent || DEFAULT_ICON,
+            iconName: dbDp.icon_name || 'Sigma', // Store the name too
+            unit: dbDp.unit || undefined,
+            min: dbDp.min_val !== null && dbDp.min_val !== undefined ? Number(dbDp.min_val) : undefined,
+            max: dbDp.max_val !== null && dbDp.max_val !== undefined ? Number(dbDp.max_val) : undefined,
+            description: dbDp.description || undefined,
+            category: dbDp.category || 'General',
+            factor: dbDp.factor !== null && dbDp.factor !== undefined ? Number(dbDp.factor) : undefined,
+            precision: dbDp.precision_val !== null && dbDp.precision_val !== undefined ? Number(dbDp.precision_val) : undefined,
+            isWritable: typeof dbDp.is_writable === 'boolean' ? dbDp.is_writable : (typeof dbDp.is_writable === 'number' ? Boolean(dbDp.is_writable) : false),
+            decimalPlaces: dbDp.decimal_places !== null && dbDp.decimal_places !== undefined ? Number(dbDp.decimal_places) : undefined,
+            enumSet: dbDp.enum_set_json ? JSON.parse(dbDp.enum_set_json) : undefined,
+            phase: (dbDp.phase || undefined) as ExtendedDataPointConfig['phase'],
+            isSinglePhase: typeof dbDp.is_single_phase === 'boolean' ? dbDp.is_single_phase : (typeof dbDp.is_single_phase === 'number' ? Boolean(dbDp.is_single_phase) : undefined),
+            threePhaseGroup: dbDp.three_phase_group || undefined,
+            notes: dbDp.notes || undefined,
+            source: 'db', // Mark as sourced from DB
+        };
+    }, []); // Empty dependency array as getIconComponent and DEFAULT_ICON are stable
+
+
+    // Initialize aiEnhancedPoints from the context's configuredDataPoints (which are DB-sourced)
+    // Also, ensure that configuredDataPoints from context are used if they exist,
+    // as this step might be revisited after other steps have modified the context.
+    useEffect(() => {
+        const contextPoints = configuredDataPoints; // from useOnboarding()
+        const contextIsLoading = isLoading; // from useOnboarding() - general context loading (includes initial fetch)
+
+        // Only initialize if aiEnhancedPoints is empty AND context is not loading AND context has points
+        if (aiEnhancedPoints.length === 0 && !contextIsLoading && contextPoints.length > 0) {
+            const mappedContextPoints = contextPoints.map(dp => ({
+                ...dp, // dp is already DataPointConfig with IconComponent
+                iconName: getIconName(dp.icon) || 'Sigma', // Ensure iconName for editing
+                source: (dp as ExtendedDataPointConfig).source || 'db' // Mark source
+            } as ExtendedDataPointConfig));
+            setAiEnhancedPoints(mappedContextPoints);
+            addLogEntry('system', `Initialized DatapointDiscoveryStep with ${mappedContextPoints.length} points from onboarding context.`);
+        } else if (aiEnhancedPoints.length === 0 && !contextIsLoading && contextPoints.length === 0) {
+            // Context is loaded but has no points (e.g. fresh setup, migration script not run yet)
+            addLogEntry('system', 'Initialized DatapointDiscoveryStep: No existing data points found in context.');
+            setAiEnhancedPoints([]); // Ensure it's empty
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [configuredDataPoints, isLoading, addLogEntry]); // React to context's points and loading state
+
     const [editingPoint, setEditingPoint] = useState<ExtendedDataPointConfig | null>(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [userProvidedGeminiKey, setUserProvidedGeminiKey] = useState<string>('');
@@ -430,8 +492,93 @@ export default function DatapointDiscoveryStep() { // Renamed component
             }
 
             if (status.status === 'completed') {
-                addChatMessage({ sender: 'ai', type: 'success', text: status.message || 'AI processing completed successfully!', details: status.data ? `Enhanced ${status.data.length} points.` : "Completed." });
-                setAiEnhancedPoints(status.data || []); // Assuming status.data is the array of ExtendedDataPointConfig
+                setIsAiProcessing(false); // Mark as not processing first
+                setShowContinueAiButton(false);
+                if (aiTaskPollIntervalId) clearInterval(aiTaskPollIntervalId);
+                setAiTaskPollIntervalId(null);
+                setCurrentAiTaskId(null);
+
+                addChatMessage({ sender: 'ai', type: 'success', text: status.message || 'AI processing completed! Attempting to save results to database...', details: status.data ? `Received ${status.data.length} enhanced points.` : "Completed." });
+
+                const aiResults = status.data as ExtendedDataPointConfig[] || [];
+                if (aiResults.length > 0) {
+                    const savedFromAI: ExtendedDataPointConfig[] = [];
+                    let successCount = 0;
+                    let errorCount = 0;
+
+                    // Add a small delay for UI to update with "Attempting to save" message
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    setIsLoading(true); // Use general loading indicator for DB save phase
+
+                    for (const aiPoint of aiResults) {
+                        const updatesForDB: Partial<Omit<DataPointDefinitionDB, 'id' | 'opcua_node_id' | 'last_modified'>> = {
+                            name: aiPoint.name,
+                            label: aiPoint.label || aiPoint.name,
+                            data_type: aiPoint.dataType,
+                            ui_type: aiPoint.uiType,
+                            icon_name: aiPoint.iconName || getIconName(aiPoint.icon) || null,
+                            unit: aiPoint.unit || null,
+                            min_val: aiPoint.min !== undefined && aiPoint.min !== null ? Number(aiPoint.min) : null,
+                            max_val: aiPoint.max !== undefined && aiPoint.max !== null ? Number(aiPoint.max) : null,
+                            description: aiPoint.description || null,
+                            category: aiPoint.category || null,
+                            factor: aiPoint.factor !== undefined && aiPoint.factor !== null ? Number(aiPoint.factor) : null,
+                            precision_val: aiPoint.precision !== undefined ? Number(aiPoint.precision) : null,
+                            is_writable: typeof aiPoint.isWritable === 'boolean' ? aiPoint.isWritable : false,
+                            decimal_places: aiPoint.decimalPlaces !== undefined ? Number(aiPoint.decimalPlaces) : null,
+                            enum_set_json: aiPoint.enumSet ? JSON.stringify(aiPoint.enumSet) : null,
+                            phase: aiPoint.phase || null,
+                            is_single_phase: typeof aiPoint.isSinglePhase === 'boolean' ? aiPoint.isSinglePhase : null,
+                            three_phase_group: aiPoint.threePhaseGroup || null,
+                            notes: aiPoint.notes || null,
+                        };
+                        try {
+                            const response = await fetch(`/api/datapoints/${aiPoint.id}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(updatesForDB),
+                            });
+                            if (!response.ok) {
+                                const errData = await response.json().catch(() => ({ message: `API error ${response.status}`}));
+                                throw new Error(errData.message);
+                            }
+                            const updatedDbPoint = await response.json() as DataPointDefinitionDB;
+                            savedFromAI.push(transformDbToUiDataPoint(updatedDbPoint));
+                            successCount++;
+                        } catch (e: any) {
+                            errorCount++;
+                            addLogEntry('error', `Failed to save AI enhanced point ${aiPoint.id} to DB.`, e.message);
+                        }
+                    }
+
+                    // Update aiEnhancedPoints with successfully saved points
+                    // This merges results: keeps existing points, updates saved ones
+                    setAiEnhancedPoints(prevPoints => {
+                        const newPointsMap = new Map(savedFromAI.map(p => [p.id, {...p, source: 'ai-enhanced' as 'ai-enhanced'}]));
+                        return prevPoints.map(p => newPointsMap.get(p.id) || p);
+                    });
+
+                    if (errorCount > 0) {
+                        addChatMessage({ sender: 'ai', type: 'warning', text: `AI results saved with ${errorCount} errors. ${successCount} points updated in DB. Please review logs.` });
+                        toast.warning("AI Enhancement Saved with Errors", { description: `${successCount}/${aiResults.length} points saved. ${errorCount} failed.`});
+                    } else {
+                        addChatMessage({ sender: 'ai', type: 'success', text: `All ${successCount} AI enhanced data points saved to database successfully!` });
+                        toast.success("AI Enhanced Data Saved!", { description: `${successCount} points updated in the database.` });
+                    }
+                    setIsLoading(false);
+                } else {
+                     addChatMessage({ sender: 'ai', type: 'info', text: 'AI processing completed, but no enhanced data was returned to save.' });
+                }
+
+            } else if (status.status === 'error_recoverable') {
+                addChatMessage({ sender: 'ai', type: 'warning', text: status.message || 'AI processing paused due to a temporary issue.', details: status.errorDetails });
+                setIsAiProcessing(false);
+                setShowContinueAiButton(true); // Show continue button
+                if (aiTaskPollIntervalId) clearInterval(aiTaskPollIntervalId);
+                setAiTaskPollIntervalId(null);
+                // currentAiTaskId remains set
+            } else if (status.status === 'error_fatal') {
+                addChatMessage({ sender: 'ai', type: 'error', text: status.message || 'AI processing failed with a fatal error.', details: status.errorDetails });
                 setIsAiProcessing(false);
                 setShowContinueAiButton(false);
                 if (aiTaskPollIntervalId) clearInterval(aiTaskPollIntervalId);
@@ -662,11 +809,130 @@ export default function DatapointDiscoveryStep() { // Renamed component
                         source: 'discovered',
                     };
                 });
-                setAiEnhancedPoints(baseConfiguredPoints);
 
+                // Now, save these baseConfiguredPoints to the database
+                if (baseConfiguredPoints.length > 0) {
+                    addLogEntry('info', `Discovery found ${baseConfiguredPoints.length} points. Attempting to save to database...`);
+                    const savedDiscoveredPointsFromApi: ExtendedDataPointConfig[] = [];
+                    let successCount = 0;
+                    let errorCount = 0;
+                    setIsLoading(true); // Indicate saving process
+
+                    for (const dp of baseConfiguredPoints) {
+                        const definitionForDb: Omit<DataPointDefinitionDB, 'last_modified'> = {
+                            id: dp.id,
+                            name: dp.name,
+                            opcua_node_id: dp.nodeId,
+                            label: dp.label,
+                            data_type: dp.dataType,
+                            ui_type: dp.uiType || null,
+                            icon_name: dp.iconName || getIconName(dp.icon) || null,
+                            unit: dp.unit || null,
+                            min_val: dp.min,
+                            max_val: dp.max,
+                            description: dp.description || null,
+                            category: dp.category,
+                            factor: dp.factor,
+                            precision_val: dp.precision,
+                            is_writable: dp.isWritable,
+                            decimal_places: dp.decimalPlaces,
+                            enum_set_json: dp.enumSet ? JSON.stringify(dp.enumSet) : null,
+                            phase: dp.phase || null,
+                            is_single_phase: dp.isSinglePhase,
+                            three_phase_group: dp.threePhaseGroup || null,
+                            notes: dp.notes || null,
+                        };
+                        try {
+                            let existingDef: DataPointDefinitionDB | null = null;
+                            try {
+                                // Check by opcua_node_id first
+                                const opcuaCheckResponse = await fetch(`/api/datapoints/opcua/${encodeURIComponent(dp.nodeId)}`);
+                                if (opcuaCheckResponse.ok) {
+                                    existingDef = await opcuaCheckResponse.json();
+                                } else if (opcuaCheckResponse.status !== 404) {
+                                    console.warn(`Could not check for existing opcua_node_id ${dp.nodeId}: ${opcuaCheckResponse.status}`);
+                                }
+                                // If not found by opcua_node_id, check by ID (for points that might have been manually created with same ID but different opcua_node_id)
+                                if (!existingDef) {
+                                    const idCheckResponse = await fetch(`/api/datapoints/${encodeURIComponent(dp.id)}`);
+                                    if (idCheckResponse.ok) {
+                                        const tempExisting = await idCheckResponse.json();
+                                        // Ensure it's not the same opcua_node_id we already failed to find (or found and will update)
+                                        if (tempExisting.opcua_node_id !== dp.nodeId) {
+                                            // This ID exists but with a different opcua_node_id. This is a conflict the user might need to resolve.
+                                            // For now, we can't reliably upsert this specific discovered point if its ID is taken by another opcua_node_id.
+                                            // We could try to create with a new ID, or skip. For now, skip with error.
+                                            throw new Error(`ID ${dp.id} already exists with a different OPC UA Node ID (${tempExisting.opcua_node_id}). Please resolve conflict.`);
+                                        }
+                                        // If it's the same opcua_node_id, existingDef would have caught it.
+                                    } else if (idCheckResponse.status !== 404) {
+                                         console.warn(`Could not check for existing id ${dp.id}: ${idCheckResponse.status}`);
+                                    }
+                                }
+
+                            } catch (fetchCheckError) {
+                                console.warn(`Error checking existing data point ${dp.id} / ${dp.nodeId}:`, fetchCheckError);
+                            }
+
+                            let savedDbPoint: DataPointDefinitionDB;
+                            if (existingDef) {
+                                const updatePayload = { ...definitionForDb };
+                                delete (updatePayload as any).id;
+                                delete (updatePayload as any).opcua_node_id;
+
+                                const response = await fetch(`/api/datapoints/${existingDef.id}`, { // Use existingDef.id
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(updatePayload),
+                                });
+                                if (!response.ok) { throw new Error(`Update failed for ${existingDef.id}: ${await response.text()}`); }
+                                savedDbPoint = await response.json();
+                            } else { // Create new
+                                const response = await fetch('/api/datapoints', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(definitionForDb), // definitionForDb includes the id for creation
+                                });
+                                if (!response.ok) { throw new Error(`Create failed for ${definitionForDb.id}: ${await response.text()}`); }
+                                savedDbPoint = await response.json();
+                            }
+                            savedDiscoveredPointsFromApi.push(transformDbToUiDataPoint(savedDbPoint));
+                            successCount++;
+                        } catch (e: any) {
+                            errorCount++;
+                            addLogEntry('error', `Failed to save discovered point ${dp.nodeId} (${dp.id}) to DB.`, e.message);
+                        }
+                    }
+
+                    setAiEnhancedPoints(prevPoints => {
+                        const newPointsMap = new Map(savedDiscoveredPointsFromApi.map(p => [p.id, {...p, source: 'discovered' as 'discovered'}]));
+                        let currentPoints = prevPoints.filter(p => p.source !== 'discovered'); // Remove old discovered, keep manual, imported, ai-enhanced unless updated
+
+                        currentPoints = currentPoints.map(p => newPointsMap.get(p.id) || p);
+
+                        savedDiscoveredPointsFromApi.forEach(sp => {
+                            if (!currentPoints.find(p => p.id === sp.id)) {
+                                currentPoints.push({...sp, source: 'discovered' as 'discovered'});
+                            }
+                        });
+                        return currentPoints;
+                    });
+
+                    if (errorCount > 0) {
+                        toast.warning("Discovered Points Saved with Errors", { description: `${successCount}/${baseConfiguredPoints.length} points saved to DB. ${errorCount} failed.`});
+                    } else if (successCount > 0) {
+                        toast.success("Discovered Points Saved!", { description: `${successCount} points saved to the database.` });
+                    } else if (baseConfiguredPoints.length > 0 && successCount === 0 && errorCount === 0) {
+                        toast.info("Discovery & DB Sync", { description: "No new or updatable discovered points found for the database." });
+                    }
+                    setIsLoading(false);
+                } else {
+                   // If discovery yields no points, ensure aiEnhancedPoints reflects this by clearing any old 'discovered' points
+                   setAiEnhancedPoints(prev => prev.filter(p => p.source !== 'discovered'));
+                }
             } else {
-                // Failure path
-                let errorMessage = "An unknown error occurred during discovery.";
+                // Failure path of OPC UA discovery itself
+                let errorMessage = "An unknown error occurred during OPC UA discovery.";
                 if (result && result.message) {
                     errorMessage = result.message;
                 } else if (!response.ok) {
@@ -676,18 +942,13 @@ export default function DatapointDiscoveryStep() { // Renamed component
             }
         } catch (error: any) {
             console.error("Discovery process error:", error);
-            // setDiscoveryProgress(0); // Polling might set this, or set to error state
-            const errorMsgForDisplay = `Discovery Error: ${error.message}`;
-            // setDiscoveryStatusMessage(errorMsgForDisplay); // Let polling handle or set final here
-            addLogEntry('error', 'OPC UA Discovery Failed', error.message); // Enhanced log
+            addLogEntry('error', 'OPC UA Discovery Failed', error.message);
             toast.error("Discovery Failed", { description: error.message.length > 100 ? error.message.substring(0, 97) + "..." : error.message });
         } finally {
-            stopDiscoveryProgressPolling(); // Ensure polling is stopped
-            // Optionally, fetch one last time to get the absolute final status
-            await fetchDiscoveryProgress();
+            stopDiscoveryProgressPolling();
+            await fetchDiscoveryProgress(); // Final status update
             setIsDiscovering(false);
             discoveryStartTimeRef.current = null;
-            // setEstimatedDiscoveryTime(0); // Removed
         }
     };
 
@@ -1005,24 +1266,27 @@ export default function DatapointDiscoveryStep() { // Renamed component
         }));
 
     const parseAndProcessFile = useCallback(async (fileToProcess: File): Promise<ExtendedDataPointConfig[]> => {
-        // Determine the base list for processing
-        const basePointsForProcessing: ExtendedDataPointConfig[] = aiEnhancedPoints.length > 0 ? aiEnhancedPoints : configuredDataPoints.map(dp => ({
-            ...dp,
-            iconName: (dp.icon as any)?.displayName?.replace("Icon", "") || "Sigma",
-            source: (dp as ExtendedDataPointConfig).source || 'imported'
-        }));
+        // This function will now parse the file and then call API endpoints to save each data point.
+        // The returned array will be the successfully saved/updated points from the DB.
 
-        return new Promise((resolve, reject) => {
+        // Determine the base list for processing (current state of aiEnhancedPoints)
+        // This is used to check if an incoming point is an update or new.
+        const currentWorkingPoints = [...aiEnhancedPoints]; // Operate on a copy
+
+        return new Promise(async (resolve, reject) => { // Make outer promise async
             const reader = new FileReader();
-            reader.onload = async (event) => {
+            reader.onload = async (event) => { // Make onload async
                 const localProcessingSummary: ProcessingSummary = {
                     processed: 0, updated: 0, added: 0, skipped: 0, errors: 0, errorDetails: [], plantDetailsUpdated: false
                 };
+                const successfullySavedOrUpdatedPoints: ExtendedDataPointConfig[] = [];
+
                 try {
                     const fileContent = event.target?.result;
                     let dataPointsFromFile: PartialDataPointFromFile[] = [];
                     let plantDetailsFromFile: Omit<FullConfigFile, 'configuredDataPoints'> | null = null;
 
+                    // ... (file parsing logic remains the same as before) ...
                     if (fileToProcess.type === "application/json" || fileToProcess.name.endsWith('.json')) {
                         const jsonData: FullConfigFile | PartialDataPointFromFile[] = JSON.parse(fileContent as string);
                         if (Array.isArray(jsonData)) {
@@ -1056,138 +1320,127 @@ export default function DatapointDiscoveryStep() { // Renamed component
                         throw new Error(`Unsupported file type: ${fileToProcess.type || "unknown"}. Please use CSV, JSON, or XLSX.`);
                     }
 
+
                     if (plantDetailsFromFile && typeof setPlantDetails === 'function') {
+                        // ... (plant details update logic - this part does not directly interact with datapoint DB, but with context)
+                        // This can remain as is, or also be moved to API calls if constants are managed via API
                         const plantDetailKeys = Object.keys(plantDetailsFromFile).filter(
                             // @ts-ignore
                             key => plantDetailsFromFile[key] !== undefined && plantDetailsFromFile[key] !== null
                         );
                         if (plantDetailKeys.length > 0) {
-                            setPlantDetails(plantDetailsFromFile);
+                            setPlantDetails(plantDetailsFromFile); // This updates context
                             localProcessingSummary.plantDetailsUpdated = true;
-                            const updatedFieldsList = plantDetailKeys.join(', ');
-                            addLogEntry('info', `Plant details updated from ${fileToProcess.name}: ${updatedFieldsList}`); // Requirement 2.5
-                            toast.success("Plant details from JSON file applied.", {
-                                description: `Updated fields: ${plantDetailKeys.slice(0, 3).join(', ')}${plantDetailKeys.length > 3 ? '...' : '.'}`
-                            });
+                            addLogEntry('info', `Plant details updated from ${fileToProcess.name}`);
+                            toast.success("Plant details from JSON file applied.");
+                            // TODO: Consider if these plant details should also be saved to the `constants` table via API.
                         }
                     }
 
-                    const newConfiguredPoints: ExtendedDataPointConfig[] = JSON.parse(JSON.stringify(basePointsForProcessing));
-
-                    dataPointsFromFile.forEach((dpFromFilePartial) => {
+                    for (const dpFromFilePartial of dataPointsFromFile) {
                         localProcessingSummary.processed++;
                         if (!dpFromFilePartial || !dpFromFilePartial.id) {
                             localProcessingSummary.skipped++;
-                            return;
+                            localProcessingSummary.errorDetails.push(`Skipped entry: Missing 'id'.`);
+                            continue;
                         }
+
                         const { icon: iconNameFromFile, ...restOfPointFromFile } = dpFromFilePartial;
+                        const existingPoint = currentWorkingPoints.find(p => p.id === dpFromFilePartial.id);
 
-                        let finalIcon: IconComponentType | undefined = undefined;
-                        let finalIconName: string | undefined = undefined;
-                        if (typeof iconNameFromFile === 'string' && iconNameFromFile.trim() !== '') {
-                            const IconFromLib = getIconComponent(iconNameFromFile);
-                            if (IconFromLib) {
-                                finalIcon = IconFromLib;
-                                finalIconName = iconNameFromFile.trim();
-                            } else {
-                                localProcessingSummary.errors++;
-                                localProcessingSummary.errorDetails.push(`ID: ${dpFromFilePartial.id}: Icon '${iconNameFromFile}' not found. Existing or default icon will be used.`);
-                            }
-                        }
+                        // Prepare the full definition for DB (either for create or update)
+                        const definitionForDb: Omit<DataPointDefinitionDB, 'last_modified'> = {
+                            id: dpFromFilePartial.id,
+                            name: restOfPointFromFile.name || existingPoint?.name || 'Unnamed',
+                            opcua_node_id: restOfPointFromFile.nodeId || existingPoint?.nodeId || 'N/A',
+                            label: restOfPointFromFile.label || restOfPointFromFile.name || existingPoint?.label || dpFromFilePartial.id,
+                            data_type: (restOfPointFromFile.dataType || existingPoint?.dataType || 'String') as DataPointDefinitionDB['data_type'],
+                            ui_type: (restOfPointFromFile.uiType || existingPoint?.uiType || 'display') as DataPointDefinitionDB['ui_type'],
+                            icon_name: iconNameFromFile || existingPoint?.iconName || 'Sigma',
+                            unit: restOfPointFromFile.unit || existingPoint?.unit || null,
+                            min_val: restOfPointFromFile.min !== undefined ? Number(restOfPointFromFile.min) : (existingPoint?.min !== undefined ? Number(existingPoint.min) : null),
+                            max_val: restOfPointFromFile.max !== undefined ? Number(restOfPointFromFile.max) : (existingPoint?.max !== undefined ? Number(existingPoint.max) : null),
+                            description: restOfPointFromFile.description || existingPoint?.description || null,
+                            category: restOfPointFromFile.category || existingPoint?.category || 'General',
+                            factor: restOfPointFromFile.factor !== undefined ? Number(restOfPointFromFile.factor) : (existingPoint?.factor !== undefined ? Number(existingPoint.factor) : null),
+                            precision_val: restOfPointFromFile.precision !== undefined ? Number(restOfPointFromFile.precision) : (existingPoint?.precision !== undefined ? Number(existingPoint.precision) : null),
+                            is_writable: typeof restOfPointFromFile.isWritable === 'boolean' ? restOfPointFromFile.isWritable : (typeof existingPoint?.isWritable === 'boolean' ? existingPoint.isWritable : false),
+                            decimal_places: restOfPointFromFile.decimalPlaces !== undefined ? Number(restOfPointFromFile.decimalPlaces) : (existingPoint?.decimalPlaces !== undefined ? Number(existingPoint.decimalPlaces) : null),
+                            enum_set_json: restOfPointFromFile.enumSet ? JSON.stringify(restOfPointFromFile.enumSet) : (existingPoint?.enumSet ? JSON.stringify(existingPoint.enumSet) : null),
+                            phase: (restOfPointFromFile.phase || existingPoint?.phase || null) as DataPointDefinitionDB['phase'],
+                            is_single_phase: typeof restOfPointFromFile.isSinglePhase === 'boolean' ? restOfPointFromFile.isSinglePhase : (typeof existingPoint?.isSinglePhase === 'boolean' ? existingPoint.isSinglePhase : null),
+                            three_phase_group: restOfPointFromFile.threePhaseGroup || existingPoint?.threePhaseGroup || null,
+                            notes: restOfPointFromFile.notes || existingPoint?.notes || null,
+                        };
 
-                        const existingPointIndex = newConfiguredPoints.findIndex(p => p.id === dpFromFilePartial.id);
+                        try {
+                            let savedDbPoint: DataPointDefinitionDB;
+                            if (existingPoint) { // Update
+                                const updatePayload = { ...definitionForDb };
+                                delete (updatePayload as any).id; // id is in URL for PUT
+                                delete (updatePayload as any).opcua_node_id; // opcua_node_id is not updatable for existing records
 
-                        if (existingPointIndex !== -1) {
-                            const existingPoint = newConfiguredPoints[existingPointIndex];
-                            Object.keys(restOfPointFromFile).forEach(keyStr => {
-                                const key = keyStr as keyof typeof restOfPointFromFile;
-                                const fileValue = restOfPointFromFile[key];
-                                if (fileValue !== undefined) {
-                                    if (typeof fileValue === 'string' && fileValue.trim() === '' && typeof existingPoint[key as keyof DataPointConfig] === 'string') {
-                                        (existingPoint as any)[key] = '';
-                                    } else if ((typeof fileValue === 'string' && fileValue.trim() !== '') || typeof fileValue !== 'string') {
-                                        (existingPoint as any)[key] = fileValue;
-                                    }
-                                }
-                            });
-                            if (finalIcon) existingPoint.icon = finalIcon;
-                            if (finalIconName) existingPoint.iconName = finalIconName;
-                            existingPoint.source = 'imported'; // Mark as imported (updated)
-                            localProcessingSummary.updated++;
-                        } else {
-                            const requiredFields: (keyof Omit<DataPointConfig, 'icon'>)[] = ['id', 'name', 'nodeId', 'dataType', 'uiType', 'label'];
-                            const isNewPointValid = requiredFields.every(field => {
-                                const val = restOfPointFromFile[field as keyof typeof restOfPointFromFile];
-                                return val !== undefined && val !== null && (typeof val !== 'string' || val.trim() !== '');
-                            });
-
-                            if (isNewPointValid) {
-                                newConfiguredPoints.push({
-                                    ...restOfPointFromFile,
-                                    icon: finalIcon || DEFAULT_ICON,
-                                    iconName: finalIconName || (DEFAULT_ICON as any)?.displayName?.replace("Icon", "") || "Merge",
-                                    category: restOfPointFromFile.category?.trim() || 'General',
-                                    label: restOfPointFromFile.label?.trim() || restOfPointFromFile.name?.trim() || restOfPointFromFile.id!,
-                                    source: 'imported', // Mark as imported (new)
-                                } as ExtendedDataPointConfig);
+                                const response = await fetch(`/api/datapoints/${dpFromFilePartial.id}`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(updatePayload),
+                                });
+                                if (!response.ok) throw new Error(await response.text());
+                                savedDbPoint = await response.json();
+                                localProcessingSummary.updated++;
+                            } else { // Create
+                                const response = await fetch('/api/datapoints', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(definitionForDb),
+                                });
+                                if (!response.ok) throw new Error(await response.text());
+                                savedDbPoint = await response.json();
                                 localProcessingSummary.added++;
-                            } else {
-                                localProcessingSummary.errors++;
-                                localProcessingSummary.skipped++;
-                                const missing = requiredFields.filter(f => {
-                                    const val = restOfPointFromFile[f];
-                                    return val === undefined || val === null || (typeof val === 'string' && val.trim() === '');
-                                }).join(', ') || 'invalid data types';
-                                localProcessingSummary.errorDetails.push(`ID: ${dpFromFilePartial.id} (New Entry): Skipped. Missing/invalid required fields (${missing}).`);
                             }
+                            successfullySavedOrUpdatedPoints.push(transformDbToUiDataPoint(savedDbPoint));
+                        } catch (apiError: any) {
+                            localProcessingSummary.errors++;
+                            localProcessingSummary.errorDetails.push(`ID: ${dpFromFilePartial.id}: API Error - ${apiError.message}`);
                         }
-                    });
+                    }
 
                     setFileProcessingSummary(localProcessingSummary);
-
-                    // Log completion of processing with summary (Requirement 2.3)
-                    const summaryMsg = `File processing complete for ${fileToProcess.name}: Added ${localProcessingSummary.added}, Updated ${localProcessingSummary.updated}, Skipped ${localProcessingSummary.skipped}, Errors ${localProcessingSummary.errors}.`;
+                    // Logging and toasts remain similar, but now reflect DB operations
+                    const summaryMsg = `DB Sync from ${fileToProcess.name}: Added ${localProcessingSummary.added}, Updated ${localProcessingSummary.updated}, Skipped ${localProcessingSummary.skipped}, Errors ${localProcessingSummary.errors}.`;
                     addLogEntry(localProcessingSummary.errors > 0 ? 'warning' : 'info', summaryMsg);
-
-                    // Log detailed errors (Requirement 2.4)
-                    localProcessingSummary.errorDetails.forEach(errDetail => {
-                        addLogEntry('error', `File processing error: ${errDetail}`);
-                    });
+                    localProcessingSummary.errorDetails.forEach(errDetail => addLogEntry('error', `DB Sync error: ${errDetail}`));
 
                     if (localProcessingSummary.processed === 0 && !localProcessingSummary.plantDetailsUpdated) {
-                        addLogEntry('info', `File processed: No new data points or plant details found in ${fileToProcess.name}.`); // Requirement 2.6
-                        toast.info("No New Data Processed", { description: "The file did not contain new data points or updatable plant details." });
+                         toast.info("No New Data Processed", { description: "The file did not contain new data points or updatable plant details for the database." });
                     } else if (localProcessingSummary.errors > 0 || localProcessingSummary.skipped > 0) {
-                        toast.warning("File Processed with Issues", {
+                        toast.warning("DB Sync from File Completed with Issues", {
                             description: `${localProcessingSummary.errors} error(s), ${localProcessingSummary.skipped} skipped. See summary & logs.`,
                             duration: 7000,
                         });
                     } else {
-                        let successToastMsg = `Processed: ${localProcessingSummary.processed}`;
-                        if (localProcessingSummary.updated > 0) successToastMsg += `, Updated: ${localProcessingSummary.updated}`;
-                        if (localProcessingSummary.added > 0) successToastMsg += `, Added: ${localProcessingSummary.added}`;
-                        toast.success("File Processed Successfully!", { description: successToastMsg + "." });
+                        toast.success("DB Sync from File Successful!", { description: `Added: ${localProcessingSummary.added}, Updated: ${localProcessingSummary.updated}.` });
                     }
-                    resolve(newConfiguredPoints);
+                    resolve(successfullySavedOrUpdatedPoints); // Resolve with points that were successfully saved/updated in DB
 
-                } catch (e: any) {
+                } catch (e: any) { // Catch for file parsing errors
                     console.error("Error parsing/processing file:", e);
                     const errorMessage = e.message || "An unknown error occurred.";
                     localProcessingSummary.errors++;
-                    localProcessingSummary.errorDetails.push(`Critical error: ${errorMessage}`);
+                    localProcessingSummary.errorDetails.push(`Critical file error: ${errorMessage}`);
                     setFileProcessingSummary(localProcessingSummary);
-                    addLogEntry('error', `Critical file processing error for ${fileToProcess.name}: ${errorMessage}`); // Requirement 2.4 (critical)
+                    addLogEntry('error', `Critical file processing error for ${fileToProcess.name}: ${errorMessage}`);
                     toast.error("File Processing Failed", { description: errorMessage, duration: 8000 });
-                    reject(basePointsForProcessing);
+                    reject([]); // Reject with empty array or current state if preferred
                 }
             };
-            reader.onerror = (e) => {
+            reader.onerror = (e) => { /* ... (error handling same as before) ... */
                 const readErrorMsg = "Failed to read the file. It might be corrupted or inaccessible.";
                 console.error("FileReader error:", e);
                 setFileProcessingSummary(prev => ({ ...(prev || { processed: 0, updated: 0, added: 0, skipped: 0, errors: 0, errorDetails: [] }), errors: (prev?.errors || 0) + 1, errorDetails: [...(prev?.errorDetails || []), readErrorMsg] }));
-                addLogEntry('error', `File read error for ${fileToProcess.name}: ${readErrorMsg}`); // Requirement 2.4 (read error)
+                addLogEntry('error', `File read error for ${fileToProcess.name}: ${readErrorMsg}`);
                 toast.error("File Read Error", { description: readErrorMsg });
-                reject(basePointsForProcessing);
+                reject([]);
             };
 
             if (fileToProcess.name.endsWith('.xlsx')) {
@@ -1196,8 +1449,8 @@ export default function DatapointDiscoveryStep() { // Renamed component
                 reader.readAsText(fileToProcess);
             }
         });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentPointsToDisplay, setPlantDetails, onboardingData, addLogEntry]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [aiEnhancedPoints, setPlantDetails, addLogEntry, transformDbToUiDataPoint]); // Removed onboardingData for now, assuming setPlantDetails handles context
 
 
     const handleUploadAndProcess = useCallback(async () => {
@@ -1324,6 +1577,78 @@ export default function DatapointDiscoveryStep() { // Renamed component
         setManualFormErrors({});
     };
 
+    // Modified to save to DB
+    const handleSaveManualDataPoint = async () => {
+        if (!validateManualForm()) {
+            toast.error("Validation Error", { description: "Please fix the errors marked in the form." });
+            return;
+        }
+        setIsLoading(true); // General loading for save operation
+
+        const iconString = manualDataPoint.icon?.trim() || initialManualDataPointState.icon || 'Tag';
+        const IconComponent = getIconComponent(iconString) || DEFAULT_ICON;
+        const iconName = iconString || (DEFAULT_ICON as any)?.displayName?.replace("Icon", "") || "Tag";
+        const finalLabel = manualDataPoint.label?.trim() || manualDataPoint.name!.trim() || manualDataPoint.id!;
+        const parseNumericField = (value?: string): number | undefined => {
+            if (value === undefined || value.trim() === '') return undefined;
+            const num = Number(value);
+            return isNaN(num) ? undefined : num;
+        };
+
+        const newPointDefinition: Omit<DataPointDefinitionDB, 'last_modified'> = {
+            id: manualDataPoint.id!.trim(),
+            name: manualDataPoint.name!.trim(),
+            opcua_node_id: manualDataPoint.nodeId!.trim(),
+            label: finalLabel,
+            data_type: manualDataPoint.dataType as DataPointDefinitionDB['data_type'],
+            ui_type: manualDataPoint.uiType as DataPointDefinitionDB['ui_type'],
+            icon_name: iconName,
+            unit: manualDataPoint.unit?.trim() || null,
+            min_val: parseNumericField(manualDataPoint.min),
+            max_val: parseNumericField(manualDataPoint.max),
+            description: manualDataPoint.description?.trim() || null,
+            category: manualDataPoint.category?.trim() || 'General',
+            factor: parseNumericField(manualDataPoint.factor),
+            precision_val: undefined, // Assuming precision is not in manual form yet
+            is_writable: false, // Default, or add to form
+            decimal_places: undefined, // Add to form if needed
+            enum_set_json: null, // Add to form if needed
+            phase: (manualDataPoint.phase?.trim() || null) as DataPointDefinitionDB['phase'],
+            is_single_phase: null, // Add to form if needed
+            three_phase_group: null, // Add to form if needed
+            notes: manualDataPoint.notes?.trim() || null,
+        };
+
+        try {
+            const response = await fetch('/api/datapoints', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newPointDefinition),
+            });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: "Unknown error during save." }));
+                throw new Error(errorData.message || `Failed to save data point. Status: ${response.status}`);
+            }
+            const savedDbPoint = await response.json() as DataPointDefinitionDB;
+            const savedUiPoint = transformDbToUiDataPoint(savedDbPoint);
+
+            // Update local state (aiEnhancedPoints which is currentPointsToDisplay)
+            setAiEnhancedPoints(prev => [...prev, { ...savedUiPoint, source: 'manual' }]);
+
+            addLogEntry('info', `Manually added and saved data point to DB: '${savedUiPoint.name}' (ID: ${savedUiPoint.id}).`);
+            toast.success(`Data point "${savedUiPoint.name}" added and saved to database!`);
+            setShowManualForm(false);
+            setManualDataPoint(initialManualDataPointState);
+            setManualFormErrors({});
+        } catch (error) {
+            console.error("Error saving manual data point:", error);
+            addLogEntry('error', "Failed to save manually added data point to DB.", (error as Error).message);
+            toast.error("Save Failed", { description: (error as Error).message });
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const openEditModal = (pointToEdit: ExtendedDataPointConfig) => {
         const iconComp = pointToEdit.icon as any;
         let currentIconName = pointToEdit.iconName;
@@ -1366,7 +1691,7 @@ export default function DatapointDiscoveryStep() { // Renamed component
         });
     };
 
-    const saveEditedPoint = () => {
+    const saveEditedPoint = async () => {
         if (!editingPoint) return;
 
         if (editingPoint.min && isNaN(Number(editingPoint.min))) { toast.error("Invalid Min Value", { description: "Min must be a valid number or empty." }); return; }
@@ -1374,23 +1699,59 @@ export default function DatapointDiscoveryStep() { // Renamed component
         if (editingPoint.factor && isNaN(Number(editingPoint.factor))) { toast.error("Invalid Factor", { description: "Factor must be a valid number or empty." }); return; }
         if (editingPoint.precision && (isNaN(Number(editingPoint.precision)) || Number(editingPoint.precision) < 0)) { toast.error("Invalid Precision", { description: "Precision must be a non-negative number or empty." }); return; }
 
+        setIsLoading(true); // Use general loading state or a specific one for edit modal
 
-        const finalEditedPoint: ExtendedDataPointConfig = {
-            ...editingPoint,
-            icon: getIconComponent(editingPoint.iconName) || DEFAULT_ICON,
-            min: editingPoint.min === undefined || editingPoint.min === null ? undefined : Number(editingPoint.min),
-            max: editingPoint.max === undefined || editingPoint.max === null ? undefined : Number(editingPoint.max),
-            factor: editingPoint.factor === undefined || editingPoint.factor === null ? undefined : Number(editingPoint.factor),
-            precision: editingPoint.precision === undefined ? undefined : Number(editingPoint.precision),
+        const updatesForDB: Partial<Omit<DataPointDefinitionDB, 'id' | 'opcua_node_id' | 'last_modified'>> = {
+            name: editingPoint.name,
+            label: editingPoint.label || editingPoint.name,
+            data_type: editingPoint.dataType,
+            ui_type: editingPoint.uiType,
+            icon_name: editingPoint.iconName || null,
+            unit: editingPoint.unit || null,
+            min_val: editingPoint.min !== undefined && editingPoint.min !== null ? Number(editingPoint.min) : null,
+            max_val: editingPoint.max !== undefined && editingPoint.max !== null ? Number(editingPoint.max) : null,
+            description: editingPoint.description || null,
+            category: editingPoint.category || null,
+            factor: editingPoint.factor !== undefined && editingPoint.factor !== null ? Number(editingPoint.factor) : null,
+            precision_val: editingPoint.precision !== undefined ? Number(editingPoint.precision) : null,
+            is_writable: typeof editingPoint.isWritable === 'boolean' ? editingPoint.isWritable : false,
+            decimal_places: editingPoint.decimalPlaces !== undefined ? Number(editingPoint.decimalPlaces) : null,
+            enum_set_json: editingPoint.enumSet ? JSON.stringify(editingPoint.enumSet) : null,
+            phase: editingPoint.phase || null,
+            is_single_phase: typeof editingPoint.isSinglePhase === 'boolean' ? editingPoint.isSinglePhase : null,
+            three_phase_group: editingPoint.threePhaseGroup || null,
+            notes: editingPoint.notes || null,
         };
+        // opcua_node_id should not be updated via this general update. If it needs to change, it implies a different point.
+        // The API for PUT /api/datapoints/[id] also prevents opcua_node_id update.
 
-        const updatedPoints = aiEnhancedPoints.map(p => p.id === finalEditedPoint.id ? finalEditedPoint : p);
-        setAiEnhancedPoints(updatedPoints);
+        try {
+            const response = await fetch(`/api/datapoints/${editingPoint.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updatesForDB),
+            });
 
-        addLogEntry('info', `Updated data point: '${finalEditedPoint.name}' (ID: ${finalEditedPoint.id}).`); // Requirement 3.2
-        toast.success(`"${finalEditedPoint.name}" updated.`);
-        setIsEditModalOpen(false);
-        setEditingPoint(null);
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: "Unknown error during update." }));
+                throw new Error(errorData.message || `Failed to update data point. Status: ${response.status}`);
+            }
+            const updatedDbPoint = await response.json() as DataPointDefinitionDB;
+            const updatedUiPoint = transformDbToUiDataPoint(updatedDbPoint);
+
+            setAiEnhancedPoints(prevPoints => prevPoints.map(p => p.id === updatedUiPoint.id ? { ...updatedUiPoint, source: editingPoint.source || 'db' } : p));
+
+            addLogEntry('info', `Updated data point in DB: '${updatedUiPoint.name}' (ID: ${updatedUiPoint.id}).`);
+            toast.success(`"${updatedUiPoint.name}" updated and saved to database.`);
+            setIsEditModalOpen(false);
+            setEditingPoint(null);
+        } catch (error) {
+            console.error("Error updating data point:", error);
+            addLogEntry('error', `Failed to update data point ${editingPoint.id} in DB.`, (error as Error).message);
+            toast.error("Update Failed", { description: (error as Error).message });
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     // currentPointsToDisplay now primarily uses aiEnhancedPoints as it aggregates all sources

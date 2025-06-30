@@ -1,28 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeDBSchema, insertNodeData } from '@/lib/duckdbClient';
-
-// Flag to ensure schema is initialized only once
-let dbInitialized = false;
-
-async function ensureDbInitialized() {
-    if (!dbInitialized) {
-        try {
-            await initializeDBSchema();
-            dbInitialized = true;
-            console.log('Database schema initialized successfully from API route.');
-        } catch (error) {
-            console.error('Failed to initialize database schema from API route:', error);
-            // Depending on the error, you might want to prevent further operations
-            // or allow the application to continue if tables might exist.
-            // For now, we'll throw to indicate a critical setup failure.
-            throw new Error('Database initialization failed');
-        }
-    }
-}
+import { insertNodeData, ensureSchemaInitialized } from '@/lib/duckdbClient'; // ensureSchemaInitialized might be called by insertNodeData already
 
 export async function POST(request: NextRequest) {
     try {
-        await ensureDbInitialized();
+        // ensureSchemaInitialized is called within insertNodeData, but calling here ensures
+        // that any other pre-checks or general DB readiness is established if needed.
+        await ensureSchemaInitialized();
 
         const body = await request.json();
         const { timestamp, nodeId, value } = body;
@@ -41,16 +24,16 @@ export async function POST(request: NextRequest) {
             }
         } else if (typeof value === 'boolean') {
             parsedValue = value ? 1 : 0;
-        }
-        else {
+        } else {
             return NextResponse.json({ message: `Invalid value type for nodeId ${nodeId}: ${typeof value}` }, { status: 400 });
         }
 
         const dateTimestamp = new Date(timestamp);
         if (isNaN(dateTimestamp.getTime())) {
-            return NextResponse.json({ message: 'Invalid timestamp format' }, { status: 400 });
+            return NextResponse.json({ message: 'Invalid timestamp format. Please use ISO 8601 format.' }, { status: 400 });
         }
 
+        // The nodeId here should be the actual OPC UA nodeId string, e.g., "ns=2;s=MyVariable"
         await insertNodeData(dateTimestamp, nodeId, parsedValue);
 
         return NextResponse.json({ message: 'Data logged successfully' }, { status: 200 });

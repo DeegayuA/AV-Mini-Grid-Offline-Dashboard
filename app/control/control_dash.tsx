@@ -37,7 +37,8 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { dataPoints as allPossibleDataPointsConfig, DataPoint } from '@/config/dataPoints';
+// import { dataPoints as allPossibleDataPointsConfig, DataPoint } from '@/config/dataPoints'; // Replaced by store
+import { DataPoint } from '@/config/dataPoints'; // Keep DataPoint type for props
 import { WS_URL, VERSION, PLANT_NAME, AVAILABLE_SLD_LAYOUT_IDS, LOCAL_STORAGE_KEY_PREFIX } from '@/config/constants';
 import { containerVariants, itemVariants } from '@/config/animationVariants';
 import { playSuccessSound, playErrorSound, playWarningSound, playInfoSound, playNotificationSound } from '@/lib/utils';
@@ -352,7 +353,22 @@ const UnifiedDashboardPage: React.FC = () => {
   const maxReconnectAttempts = 10;
   const lastToastTimestamps = useRef<Record<string, number>>({});
 
-  const allPossibleDataPoints = useMemo(() => allPossibleDataPointsConfig, []);
+  // Fetch data point configurations from Zustand store
+  const {
+    dataPointConfigs: storeDataPointConfigs,
+    isLoadingDataPointConfigs,
+    dataPointConfigsError
+  } = useAppStore(state => ({
+    dataPointConfigs: state.dataPointConfigs,
+    isLoadingDataPointConfigs: state.isLoadingDataPointConfigs,
+    dataPointConfigsError: state.dataPointConfigsError,
+  }));
+
+  // Convert the store's Record<string, DataPoint> to DataPoint[] for use in this component
+  const allPossibleDataPoints = useMemo(() => {
+    return Object.values(storeDataPointConfigs);
+  }, [storeDataPointConfigs]);
+
   // ... (rest of your useMemo hooks are fine) ...
   const currentlyDisplayedDataPoints = useMemo(() => displayedDataPointIds.map(id => allPossibleDataPoints.find(dp => dp.id === id)).filter(Boolean) as DataPoint[], [displayedDataPointIds, allPossibleDataPoints]);
   const { threePhaseGroups, individualPoints } = useMemo(() => groupDataPoints(currentlyDisplayedDataPoints), [currentlyDisplayedDataPoints]);
@@ -598,8 +614,34 @@ const UnifiedDashboardPage: React.FC = () => {
   }, [setSldLayoutId, currentPath]);
 
   const storeHasHydrated = useAppStore.persist.hasHydrated();
-  if (!storeHasHydrated || !authCheckComplete || weatherCardConfig === null) { // Added weatherCardConfig check for loading
-    return (<div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground"><Loader2 className="h-12 w-12 animate-spin text-primary" /><p className="mt-4 text-lg">Loading Control Panel...</p></div>);
+
+  // Initial loading checks
+  if (!storeHasHydrated || !authCheckComplete || isLoadingDataPointConfigs || weatherCardConfig === null) {
+    let loadingMessage = "Loading Control Panel...";
+    if (!storeHasHydrated) loadingMessage = "Initializing session...";
+    else if (!authCheckComplete) loadingMessage = "Authenticating...";
+    else if (isLoadingDataPointConfigs) loadingMessage = "Loading system configurations...";
+    else if (weatherCardConfig === null) loadingMessage = "Loading weather preferences...";
+
+    return (
+        <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground">
+            <Loader2 className="h-12 w-12 animate-spin text-primary" />
+            <p className="mt-4 text-lg">{loadingMessage}</p>
+        </div>
+    );
+  }
+
+  if (dataPointConfigsError) {
+    return (
+        <div className="flex flex-col items-center justify-center min-h-screen bg-background text-destructive p-4">
+            <AlertTriangle className="h-12 w-12 mb-4" />
+            <p className="text-xl font-semibold mb-2">Error Loading System Configuration</p>
+            <p className="text-sm mb-4 text-center max-w-md">{dataPointConfigsError}</p>
+            <Button onClick={() => useAppStore.getState().fetchAndSetDataPointConfigs()} variant="outline">
+                Try Reloading Configuration
+            </Button>
+        </div>
+    );
   }
 
   const sldSpecificEditMode = isGlobalEditMode && currentUserRole === UserRole.ADMIN;

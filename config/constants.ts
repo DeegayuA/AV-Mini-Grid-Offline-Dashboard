@@ -21,29 +21,28 @@ export const WS_URL = (() => {
     // Fallback for server-side or non-browser environments (local default)
     return `ws://localhost:${WS_PORT}`;
 })();
-export const OPC_UA_ENDPOINT_OFFLINE = "opc.tcp://192.168.1.2:4840";
-export const OPC_UA_ENDPOINT_ONLINE = "opc.tcp://100.91.251.229:4840";
-export const VERSION = "- Release v2025.06.26 • 16:30 (GMT+5:30)";
-export const PLANT_NAME= "Mini Grid";
-export const PLANT_LOCATION = "Athurugiriya, Colombo, Sri Lanka";
-export const PLANT_TYPE = "Solar Power Plant";
-export const PLANT_CAPACITY = "2000 kW"; // 2 MW
-export const PLANT_CAPACITY_WATTS = 2000000; // 2 MW in watts
+// OPC_UA_ENDPOINT_OFFLINE, OPC_UA_ENDPOINT_ONLINE are now in DB, fetched by OnboardingContext/appStore if needed.
+// PLANT_NAME, PLANT_LOCATION, PLANT_TYPE, PLANT_CAPACITY, PLANT_CAPACITY_WATTS are now in DB.
+// APP_NAME, APP_DESCRIPTION, APP_AUTHOR etc. are now in DB (or should be).
 
-export const APP_NAME = "Mini Grid - AVR&D";
-export const APP_BASE_URL = "https://av-mini-grid-offline-dashboard.vercel.app"; 
-export const APP_URL = "https://yourwebsite.com";
-export const APP_KEYWORDS = "solar, monitoring, control, energy, management";
-export const APP_DESCRIPTION = "A web-based plant monitoring system for real-time data visualization and control.";
+export const VERSION = "- Release v2025.06.26 • 16:30 (GMT+5:30)"; // Build-specific, keep here.
+
+// Static assets and client-specific keys remain here.
 export const APP_LOGO = logo;
 export const APP_LOGO2 = logo2;
 export const APP_FAVICON = "/favicon.ico";
-export const APP_AUTHOR = "Synergy Power";
-export const APP_AUTHOR_URL = "https://yourwebsite.com";
-export const APP_COPYRIGHT = "© 2025 Synergy Power. All rights reserved.";
-export const APP_COPYRIGHT_URL = "https://yourwebsite.com/copyright";
-export const APP_PRIVACY_POLICY = "https://yourwebsite.com/privacy-policy";
-export const APP_TERMS_OF_SERVICE = "https://yourwebsite.com/terms-of-service";
+
+// URLs that might be configurable but often are part of deployment/build.
+// If these need to be highly dynamic, they can also move to DB. For now, keeping some.
+// export const APP_BASE_URL = "https://av-mini-grid-offline-dashboard.vercel.app"; // Example, could be DB
+// export const APP_URL = "https://yourwebsite.com"; // Example, could be DB
+// export const APP_KEYWORDS = "solar, monitoring, control, energy, management"; // Example, could be DB
+// export const APP_AUTHOR_URL = "https://yourwebsite.com"; // Example, could be DB
+// export const APP_COPYRIGHT = "© 2025 Synergy Power. All rights reserved."; // Example, could be DB
+// export const APP_COPYRIGHT_URL = "https://yourwebsite.com/copyright"; // Example, could be DB
+// export const APP_PRIVACY_POLICY = "https://yourwebsite.com/privacy-policy"; // Example, could be DB
+// export const APP_TERMS_OF_SERVICE = "https://yourwebsite.com/terms-of-service"; // Example, could be DB
+
 
 // Potentially in a shared types file or at the top of PowerTimelineGraph.tsx
 export type PowerUnit = 'W' | 'kW' | 'MW' | 'GW';

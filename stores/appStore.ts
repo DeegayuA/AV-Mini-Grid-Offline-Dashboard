@@ -21,22 +21,43 @@ import React from 'react'; // forwardRef and createElement are part of React
 import { toast } from 'sonner';
 import { dataPoints as rawDataPoints } from '@/config/dataPoints'; // Assuming dataPoints are defined here
 
-// Process rawDataPoints for icons, ensure this pattern works for your icon components
-const dataPointsWithIcons = rawDataPoints.map((dp) => {
-  let iconComponent = dp.icon; // Assume dp.icon is already a React Component or null/undefined
-  // If dp.icon was a function that _returns_ a component or JSX, that's different.
-  // The original forwardRef approach might be if dp.icon itself needs a ref.
-  // For simple LucideIcon components, they are already functions/components.
-  if (dp.icon && typeof dp.icon === 'function' && !(React.isValidElement(dp.icon))) {
-      // This condition tries to check if it's a component function vs already an element instance
-      // If dp.icon is like `BatteryCharging`, it's already a component.
-      // The forwardRef example from original code seems complex if icons are just standard components.
-      // Simpler: just use the icon component directly if it's a valid React component type.
-      // For this example, assuming dp.icon are direct Lucide components:
-      // iconComponent = dp.icon; (no change needed if already a component)
-  }
-  return { ...dp, icon: iconComponent };
-});
+import { DataPointDefinitionDB } from '@/lib/duckdbClient'; // Import DB type
+import * as lucideIcons from 'lucide-react'; // For icon mapping
+import { DataPointConfig } from '@/config/dataPoints'; // For UI type (DataPoint is also there)
+
+// Helper to get Lucide icon component from string name (similar to one in OnboardingContext)
+const getIconComponentFromStringForStore = (iconName?: string | null): IconComponentType => {
+    if (!iconName) return lucideIcons.HelpCircle; // Default icon
+    const icons = lucideIcons as unknown as Record<string, IconComponentType>;
+    const iconKey = Object.keys(icons).find(key => key.toLowerCase() === iconName.toLowerCase().replace(/icon$/i, ''));
+    return iconKey ? icons[iconKey] : lucideIcons.HelpCircle;
+};
+
+// Helper to transform DB definition to UI DataPointConfig for the store
+const transformDbDefToStoreDataPoint = (dbDef: DataPointDefinitionDB): DataPoint => { // Using DataPoint interface from config/dataPoints.ts
+    return {
+        id: dbDef.id,
+        name: dbDef.name,
+        nodeId: dbDef.opcua_node_id, // opcua_node_id from DB maps to nodeId in UI type
+        label: dbDef.label || dbDef.name,
+        dataType: dbDef.data_type as DataPoint['dataType'],
+        uiType: (dbDef.ui_type || 'display') as DataPoint['uiType'],
+        icon: getIconComponentFromStringForStore(dbDef.icon_name),
+        unit: dbDef.unit || undefined,
+        min: dbDef.min_val !== null && dbDef.min_val !== undefined ? Number(dbDef.min_val) : undefined,
+        max: dbDef.max_val !== null && dbDef.max_val !== undefined ? Number(dbDef.max_val) : undefined,
+        description: dbDef.description || undefined,
+        category: dbDef.category || 'General',
+        factor: dbDef.factor !== null && dbDef.factor !== undefined ? Number(dbDef.factor) : undefined,
+        precision: dbDef.precision_val !== null && dbDef.precision_val !== undefined ? Number(dbDef.precision_val) : undefined,
+        isWritable: typeof dbDef.is_writable === 'boolean' ? dbDef.is_writable : (typeof dbDef.is_writable === 'number' ? Boolean(dbDef.is_writable) : false),
+        decimalPlaces: dbDef.decimal_places !== null && dbDef.decimal_places !== undefined ? Number(dbDef.decimal_places) : undefined,
+        enumSet: dbDef.enum_set_json ? JSON.parse(dbDef.enum_set_json) : undefined,
+        // phase, isSinglePhase, threePhaseGroup, notes are part of ExtendedDataPointConfig,
+        // DataPoint interface from config/dataPoints.ts might not have them.
+        // If they are needed in the store's version of DataPoint, add them here.
+    };
+};
 
 
 const defaultUser: User = {
@@ -48,27 +69,28 @@ const defaultUser: User = {
 };
 
 interface AppState {
-  opcUaNodeValues: Record<string, string | number | boolean>; // Renamed and typed
-  dataPoints: Record<string, DataPoint>; // Keyed by DataPoint ID for easy lookup
+  opcUaNodeValues: Record<string, string | number | boolean>;
+  dataPointConfigs: Record<string, DataPoint>; // Store as Record<string, DataPoint> (UI type)
+  isLoadingDataPointConfigs: boolean;
+  dataPointConfigsError: string | null;
   isEditMode: boolean;
   currentUser: User | null;
-  selectedElementForDetails: CustomNodeType | CustomFlowEdge | null; // Added for detail sheet
+  selectedElementForDetails: CustomNodeType | CustomFlowEdge | null;
   soundEnabled: boolean;
-  activeAlarms: ActiveAlarm[]; // Added for system-wide alarm display
+  activeAlarms: ActiveAlarm[];
   // API Monitoring State
   apiConfigs: Record<string, ApiConfig>;
   apiDowntimes: ApiDowntimeEvent[];
 }
 
 const initialState: AppState = {
-  opcUaNodeValues: {}, // Initialized to empty object
-  dataPoints: dataPointsWithIcons.reduce<Record<string, DataPoint>>((acc, dp) => {
-    acc[dp.id] = { ...dp, label: dp.label || dp.name || dp.id }; // Ensure label exists
-    return acc;
-  }, {}),
-  isEditMode: false, // Default to false, admin can toggle
-  currentUser: defaultUser, // Default to guest or null if prefer explicit login
-  selectedElementForDetails: null, // Initialize as null
+  opcUaNodeValues: {},
+  dataPointConfigs: {}, // Initialize as empty, will be fetched
+  isLoadingDataPointConfigs: true,
+  dataPointConfigsError: null,
+  isEditMode: false,
+  currentUser: defaultUser,
+  selectedElementForDetails: null,
   soundEnabled: typeof window !== 'undefined' ? localStorage.getItem('dashboardSoundEnabled') === 'true' : true,
   activeAlarms: [], // Initialize as empty
   // API Monitoring Initial State
@@ -88,20 +110,21 @@ interface ApiMonitoringActions {
   clearApiMonitoringData: () => void;
 }
 
-interface SLDActions extends ApiMonitoringActions { // Extend SLDActions with new ones
-  updateOpcUaNodeValues: (updates: Record<string, string | number | boolean>) => void; // Renamed and typed
-  setDataPoints: (dataPoints: Record<string, DataPoint>) => void; // For dynamic updates to metadata if needed
+interface SLDActions extends ApiMonitoringActions {
+  updateOpcUaNodeValues: (updates: Record<string, string | number | boolean>) => void;
+  fetchAndSetDataPointConfigs: () => Promise<void>; // Action to fetch configs
+  // setDataPoints: (dataPoints: Record<string, DataPoint>) => void; // Kept if direct setting is ever needed
   toggleEditMode: () => void;
   setCurrentUser: (user: User | null) => void;
   logout: () => void;
-  setSelectedElementForDetails: (element: CustomNodeType | CustomFlowEdge | null) => void; // Added action
+  setSelectedElementForDetails: (element: CustomNodeType | CustomFlowEdge | null) => void;
   updateNodeConfig: (nodeId: string, config: any, data?: any) => void;
   setSoundEnabled: (enabled: boolean) => void;
-  setActiveAlarms: (alarms: ActiveAlarm[]) => void; // Added action
+  setActiveAlarms: (alarms: ActiveAlarm[]) => void;
 }
 
 const onRehydrateStorageCallback = (
-    hydratedState: (AppState & Partial<ApiMonitoringActions>) | undefined, // Updated type
+    hydratedState: (AppState & Partial<ApiMonitoringActions>) | undefined,
     error?: Error | unknown
 ): void => {
     if (error) {
@@ -110,14 +133,13 @@ const onRehydrateStorageCallback = (
         toast.error("Session Restore Failed", { description: `Could not restore your session data. Details: ${errorMessage}. Some settings may be reset.` });
     } else {
         // console.log("Zustand (appStore): Hydration from storage complete.");
-        if (hydratedState?.currentUser && hydratedState.currentUser.email !== defaultUser.email) {
-            // console.log("Zustand (appStore): Rehydrated with User:", hydratedState.currentUser.email, "Role:", hydratedState.currentUser.role);
-        }
-        // Load API configs and downtimes from localStorage if they exist in the hydrated state
-        // This ensures that persisted API monitoring data is loaded into the store on startup.
-        // Note: This is a bit manual; Zustand's persist middleware handles the actual hydration.
-        // This callback is more for logging or reacting to hydration.
-        // If `apiConfigs` and `apiDowntimes` are part of the persisted state, they will be automatically restored.
+        // Trigger fetch of data point configs after rehydration if not already loading
+        // This ensures fresh data from DB overrides any potentially stale persisted data (if dataPointConfigs were persisted)
+        // However, dataPointConfigs are NOT part of `partialize` below, so they won't be in hydratedState from storage.
+        // The fetch should happen on app initialization regardless of hydration of other fields.
+        // This call is better placed in an app initializer component.
+        // For now, we can call it here, but it might run multiple times if store is recreated.
+        // A flag or check in useAppStore.getState().fetchAndSetDataPointConfigs() might be needed.
     }
 };
 
