@@ -16,13 +16,15 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 
-import { useParams, usePathname } from "next/navigation"
-import { PLANT_LOCATION } from "@/config/constants";
+import { usePathname } from "next/navigation" // useParams removed
+// import { PLANT_LOCATION } from "@/config/constants"; // Will get from appStore
+import { useAppStore } from "@/stores/appStore"; // Import useAppStore
 import ApiMonitoringPage from "./api";
 
 export default function Page() {
   const pathname = usePathname();
-  const controlParam = pathname?.split('/').filter(Boolean).slice(-1)[0]?.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Control Panel';
+  const plantLocation = useAppStore((state) => state.appConstants.PLANT_LOCATION || "Plant Location"); // Fallback
+  const controlParam = pathname?.split('/').filter(Boolean).slice(-1)[0]?.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'API Monitoring'; // Better fallback for this page
   return (
     <SidebarProvider>
       <AppSidebar/>
@@ -38,7 +40,7 @@ export default function Page() {
               <BreadcrumbList>
                 <BreadcrumbItem className="hidden md:block">
                   <BreadcrumbLink href="/">
-                   {PLANT_LOCATION}
+                   {plantLocation}
                   </BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />

@@ -73,6 +73,11 @@ interface AppState {
   dataPointConfigs: Record<string, DataPoint>; // Store as Record<string, DataPoint> (UI type)
   isLoadingDataPointConfigs: boolean;
   dataPointConfigsError: string | null;
+
+  appConstants: Record<string, string | undefined>; // Store all constants as key-value pairs
+  isLoadingAppConstants: boolean;
+  appConstantsError: string | null;
+
   isEditMode: boolean;
   currentUser: User | null;
   selectedElementForDetails: CustomNodeType | CustomFlowEdge | null;
@@ -88,6 +93,11 @@ const initialState: AppState = {
   dataPointConfigs: {}, // Initialize as empty, will be fetched
   isLoadingDataPointConfigs: true,
   dataPointConfigsError: null,
+
+  appConstants: {}, // Initialize as empty
+  isLoadingAppConstants: true,
+  appConstantsError: null,
+
   isEditMode: false,
   currentUser: defaultUser,
   selectedElementForDetails: null,
@@ -112,8 +122,9 @@ interface ApiMonitoringActions {
 
 interface SLDActions extends ApiMonitoringActions {
   updateOpcUaNodeValues: (updates: Record<string, string | number | boolean>) => void;
-  fetchAndSetDataPointConfigs: () => Promise<void>; // Action to fetch configs
-  // setDataPoints: (dataPoints: Record<string, DataPoint>) => void; // Kept if direct setting is ever needed
+  fetchAndSetDataPointConfigs: () => Promise<void>;
+  fetchAndSetAppConstants: () => Promise<void>; // New action for constants
+      // setDataPoints: (dataPoints: Record<string, DataPoint>) => void; // This was for the old dataPoints, replaced by dataPointConfigs
   toggleEditMode: () => void;
   setCurrentUser: (user: User | null) => void;
   logout: () => void;
@@ -189,8 +200,70 @@ export const useAppStore = create<AppState & SLDActions>()(
           return { opcUaNodeValues: { ...state.opcUaNodeValues, ...updates }};
         }),
 
-      setDataPoints: (newDataPoints: Record<string, DataPoint>) =>
-        set({ dataPoints: newDataPoints }),
+      // setDataPoints: (newDataPoints: Record<string, DataPoint>) => // Old function
+      //   set({ dataPointConfigs: newDataPoints }), // Ensure this updates dataPointConfigs if re-enabled
+
+      fetchAndSetDataPointConfigs: async () => {
+        if (Object.keys(get().dataPointConfigs).length > 0 && !get().dataPointConfigsError && !get().isLoadingDataPointConfigs) {
+            // console.log("appStore: DataPoint configs already loaded and not in error/loading state.");
+            return;
+        }
+        if (get().isLoadingDataPointConfigs && !get().dataPointConfigsError) {
+            // console.log("appStore: DataPoint configs fetch already in progress.");
+            return;
+        }
+
+        set({ isLoadingDataPointConfigs: true, dataPointConfigsError: null });
+        try {
+            const response = await fetch('/api/datapoints');
+            if (!response.ok) {
+                 const errorData = await response.json().catch(() => ({ message: `API error ${response.status}` }));
+                 throw new Error(errorData.message || `Failed to fetch data point configurations`);
+            }
+            const dbDefs = await response.json() as DataPointDefinitionDB[];
+            const uiConfigs = dbDefs.reduce<Record<string, DataPoint>>((acc, dbDef) => {
+                acc[dbDef.id] = transformDbDefToStoreDataPoint(dbDef);
+                return acc;
+            }, {});
+            set({ dataPointConfigs: uiConfigs, isLoadingDataPointConfigs: false });
+            // console.log("appStore: DataPoint configs loaded successfully.");
+        } catch (error) {
+            console.error("appStore: Error fetching data point configs:", error);
+            set({ isLoadingDataPointConfigs: false, dataPointConfigsError: (error as Error).message });
+            toast.error("Failed to Load System Configurations", { description: "Could not load data point definitions. Some features may be affected."});
+        }
+      },
+
+      fetchAndSetAppConstants: async () => {
+        if (Object.keys(get().appConstants).length > 0 && !get().appConstantsError && !get().isLoadingAppConstants) {
+            // console.log("appStore: App constants already loaded.");
+            return;
+        }
+         if (get().isLoadingAppConstants && !get().appConstantsError) {
+            // console.log("appStore: App constants fetch already in progress.");
+            return;
+        }
+
+        set({ isLoadingAppConstants: true, appConstantsError: null });
+        try {
+            const response = await fetch('/api/constants');
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: `API error ${response.status}` }));
+                throw new Error(errorData.message || `Failed to fetch application constants`);
+            }
+            const dbConstants = await response.json() as ConstantDB[];
+            const constantsMap = dbConstants.reduce<Record<string, string | undefined>>((acc, constant) => {
+                acc[constant.key] = constant.value; // Ensure ConstantDB has key and value
+                return acc;
+            }, {});
+            set({ appConstants: constantsMap, isLoadingAppConstants: false });
+            // console.log("appStore: Application constants loaded.", constantsMap);
+        } catch (error) {
+            console.error("appStore: Error fetching application constants:", error);
+            set({ isLoadingAppConstants: false, appConstantsError: (error as Error).message });
+            toast.error("Failed to Load Application Settings", { description: "Some application display names or settings may be incorrect."});
+        }
+      },
 
       toggleEditMode: () => {
         const currentUser = get().currentUser;

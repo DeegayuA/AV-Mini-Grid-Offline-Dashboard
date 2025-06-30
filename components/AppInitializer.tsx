@@ -5,36 +5,57 @@ import { useAppStore } from '@/stores/appStore';
 import { useOnboarding } from '@/app/onboarding/OnboardingContext'; // To access context loading state
 
 export default function AppInitializer() {
-    const fetchConfigs = useAppStore(state => state.fetchAndSetDataPointConfigs);
-    const isLoadingConfigs = useAppStore(state => state.isLoadingDataPointConfigs);
-    const configsError = useAppStore(state => state.dataPointConfigsError);
-    const dataPointConfigs = useAppStore(state => state.dataPointConfigs);
+    const {
+        fetchAndSetDataPointConfigs,
+        isLoadingDataPointConfigs,
+        dataPointConfigsError,
+        dataPointConfigs,
+        fetchAndSetAppConstants,
+        isLoadingAppConstants,
+        appConstantsError,
+        appConstants
+    } = useAppStore(state => ({
+        fetchAndSetDataPointConfigs: state.fetchAndSetDataPointConfigs,
+        isLoadingDataPointConfigs: state.isLoadingDataPointConfigs,
+        dataPointConfigsError: state.dataPointConfigsError,
+        dataPointConfigs: state.dataPointConfigs,
+        fetchAndSetAppConstants: state.fetchAndSetAppConstants,
+        isLoadingAppConstants: state.isLoadingAppConstants,
+        appConstantsError: state.appConstantsError,
+        appConstants: state.appConstants,
+    }));
 
-    // Access OnboardingContext loading state to potentially coordinate or log
-    // This assumes AppInitializer is rendered within OnboardingProvider
-    // If not, this part needs to be conditional or removed.
-    // For now, let's assume it might be for observing.
-    const onboardingCtx = useOnboarding(); // This will only work if AppInitializer is a child of OnboardingProvider
+    // OnboardingContext observation can be removed if not strictly needed for coordination here
+    // const onboardingCtx = useOnboarding();
 
-    const [initialized, setInitialized] = useState(false);
+    const [dpConfigsInitialized, setDpConfigsInitialized] = useState(false);
+    const [appConstantsInitialized, setAppConstantsInitialized] = useState(false);
 
     useEffect(() => {
-        if (!initialized && !isLoadingConfigs && Object.keys(dataPointConfigs).length === 0 && !configsError) {
+        if (!dpConfigsInitialized && !isLoadingDataPointConfigs && Object.keys(dataPointConfigs).length === 0 && !dataPointConfigsError) {
             // console.log('AppInitializer: Fetching data point configurations for appStore...');
-            fetchConfigs();
-            setInitialized(true); // Mark as initialized to prevent re-fetching on every render
-        } else if (!isLoadingConfigs && (Object.keys(dataPointConfigs).length > 0 || configsError)) {
-            // Already loaded or errored, mark as initialized attempt
-            setInitialized(true);
+            fetchAndSetDataPointConfigs();
+            setDpConfigsInitialized(true);
+        } else if (!isLoadingDataPointConfigs && (Object.keys(dataPointConfigs).length > 0 || dataPointConfigsError)) {
+            setDpConfigsInitialized(true);
         }
-    }, [fetchConfigs, isLoadingConfigs, dataPointConfigs, configsError, initialized]);
+    }, [fetchAndSetDataPointConfigs, isLoadingDataPointConfigs, dataPointConfigs, dataPointConfigsError, dpConfigsInitialized]);
 
     useEffect(() => {
-        if (onboardingCtx?.isLoading === false) {
-            // console.log("AppInitializer: OnboardingContext has finished its initial loading.");
+        if (!appConstantsInitialized && !isLoadingAppConstants && Object.keys(appConstants).length === 0 && !appConstantsError) {
+            // console.log('AppInitializer: Fetching application constants for appStore...');
+            fetchAndSetAppConstants();
+            setAppConstantsInitialized(true);
+        } else if (!isLoadingAppConstants && (Object.keys(appConstants).length > 0 || appConstantsError)) {
+            setAppConstantsInitialized(true);
         }
-    }, [onboardingCtx?.isLoading]);
+    }, [fetchAndSetAppConstants, isLoadingAppConstants, appConstants, appConstantsError, appConstantsInitialized]);
 
-    // This component does not render anything itself, it's for initialization logic.
+    // useEffect(() => {
+    //     if (onboardingCtx?.isLoading === false) {
+    //         // console.log("AppInitializer: OnboardingContext has finished its initial loading.");
+    //     }
+    // }, [onboardingCtx?.isLoading]);
+
     return null;
 }

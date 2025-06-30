@@ -5,13 +5,15 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { HardHat, Wrench, Cog, BarChart3 } from 'lucide-react'; // Using construction/tool related icons
 import { useTheme } from 'next-themes';
+import { useAppStore } from '@/stores/appStore'; // Import useAppStore
 
 // Assuming these exist from your project structure
-import { PLANT_NAME, VERSION } from '@/config/constants';
+import { VERSION } from '@/config/constants'; // PLANT_NAME will come from store
 import ThemeToggle from './ThemeToggle'; // Assuming this is a small, self-contained component
 
 const PlaceholderHeader: React.FC = () => {
-    const headerTitle = `${PLANT_NAME || 'Project'} - Page Under Construction`;
+    const plantName = useAppStore((state) => state.appConstants.PLANT_NAME || "Project"); // Fallback
+    const headerTitle = `${plantName} - Page Under Construction`;
 
     return (
         <motion.header

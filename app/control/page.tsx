@@ -17,11 +17,13 @@ import {
 } from "@/components/ui/sidebar"
 import ControlPanel from "./control_dash"
 
-import { useParams, usePathname } from "next/navigation"
-import { PLANT_LOCATION } from "@/config/constants";
+import { usePathname } from "next/navigation" // useParams removed as it's not used
+// import { PLANT_LOCATION } from "@/config/constants"; // Will get from appStore
+import { useAppStore } from "@/stores/appStore";
 
 export default function Page() {
   const pathname = usePathname();
+  const plantLocation = useAppStore((state) => state.appConstants.PLANT_LOCATION || "Plant Location"); // Fallback
   const controlParam = pathname?.split('/').filter(Boolean).slice(-1)[0]?.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Control Panel';
   return (
     <SidebarProvider>
@@ -38,7 +40,7 @@ export default function Page() {
               <BreadcrumbList>
                 <BreadcrumbItem className="hidden md:block">
                   <BreadcrumbLink href="/">
-                   {PLANT_LOCATION}
+                   {plantLocation}
                   </BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />

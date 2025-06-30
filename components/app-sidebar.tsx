@@ -39,7 +39,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { AppLogo2 } from "@/app/onboarding/AppLogo";
-import { APP_NAME } from "@/config/constants";
+// import { APP_NAME } from "@/config/constants"; // Will get from appStore
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
@@ -131,6 +131,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   const storeHasHydrated = useAppStore.persist.hasHydrated();
   const currentUser = useAppStore((state) => state.currentUser);
+  const appName = useAppStore((state) => state.appConstants.APP_NAME || "App"); // Fallback to "App"
 
   // Dynamically construct navMainItems based on user role
   const navMainItems = React.useMemo(() => {
@@ -246,7 +247,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   <AppLogo2 className="max-h-full max-w-full h-auto w-auto text-white" />
                 </motion.div>
                 <motion.div variants={appNameVariants} className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-bold text-md text-slate-800 dark:text-slate-100">{APP_NAME}</span>
+                  <span className="truncate font-bold text-md text-slate-800 dark:text-slate-100">{appName}</span>
                   <span className="truncate text-xs text-slate-500 dark:text-slate-400">Energy Portal</span>
                 </motion.div>
               </Link>
