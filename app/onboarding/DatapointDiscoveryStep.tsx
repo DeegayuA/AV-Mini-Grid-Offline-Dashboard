@@ -27,6 +27,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Checkbox } from "@/components/ui/checkbox"; // Import Checkbox
 
 import { cn } from '@/lib/utils';
+import { DataPointDefinitionDB } from '@/lib/duckdbClient';
 
 const GEMINI_API_KEY_EXISTS_CLIENT = process.env.NEXT_PUBLIC_GEMINI_API_KEY_EXISTS === 'true';
 
@@ -294,6 +295,10 @@ export default function DatapointDiscoveryStep() { // Renamed component
     const [discoveredDataFilePath, setDiscoveredDataFilePath] = useState<string | null>(null);
     const [progressPollIntervalId, setProgressPollIntervalId] = useState<NodeJS.Timeout | null>(null); // Added state for polling
 
+    // Edit modal states
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editingPoint, setEditingPoint] = useState<ExtendedDataPointConfig | null>(null);
+
     const [isAiProcessing, setIsAiProcessing] = useState(false);
     const [aiProgress, setAiProgress] = useState(0);
     // const [aiStatusMessage, setAiStatusMessage] = useState(""); // Replaced by chat messages
@@ -320,10 +325,20 @@ export default function DatapointDiscoveryStep() { // Renamed component
         }
     ]);
 
-    // const [dbDataPoints, setDbDataPoints] = useState<ExtendedDataPointConfig[]>([]); // No longer needed here, context provides
-    // const [isFetchingDbPoints, setIsFetchingDbPoints] = useState(true); // No longer needed here
-    const [localChanges, setLocalChanges] = useState<ExtendedDataPointConfig[]>([]); // For points not yet saved to DB / or transient UI changes
+    // Add chat message function
+    const addChatMessage = useCallback((message: Omit<ChatMessage, 'id' | 'timestamp'>) => {
+        setChatMessages(prev => [...prev, {
+            ...message,
+            id: Date.now().toString(),
+            timestamp: formatChatMessageTimestamp()
+        }]);
+    }, []);
 
+    // Additional states needed for AI enhancement
+    const [aiConsentGiven, setAiConsentGiven] = useState(false);
+    const [showGeminiKeyInput, setShowGeminiKeyInput] = useState(false);
+    const [userProvidedGeminiKey, setUserProvidedGeminiKey] = useState('');
+    const [localChanges, setLocalChanges] = useState<ExtendedDataPointConfig[]>([]); // For points not yet saved to DB / or transient UI changes
 
     // Helper function to transform DB data point to UI data point (can be kept if used elsewhere, or removed if context does all transformation)
     // For now, keeping it as it might be used if this component directly fetches/transforms for some reason,
@@ -353,58 +368,9 @@ export default function DatapointDiscoveryStep() { // Renamed component
             isSinglePhase: typeof dbDp.is_single_phase === 'boolean' ? dbDp.is_single_phase : (typeof dbDp.is_single_phase === 'number' ? Boolean(dbDp.is_single_phase) : undefined),
             threePhaseGroup: dbDp.three_phase_group || undefined,
             notes: dbDp.notes || undefined,
-            source: 'db', // Mark as sourced from DB
+            source: 'imported', // Mark as sourced from DB, changed to 'imported' to match interface
         };
     }, []); // Empty dependency array as getIconComponent and DEFAULT_ICON are stable
-
-
-    // Initialize aiEnhancedPoints from the context's configuredDataPoints (which are DB-sourced)
-    // Also, ensure that configuredDataPoints from context are used if they exist,
-    // as this step might be revisited after other steps have modified the context.
-    useEffect(() => {
-        const contextPoints = configuredDataPoints; // from useOnboarding()
-        const contextIsLoading = isLoading; // from useOnboarding() - general context loading (includes initial fetch)
-
-        // Only initialize if aiEnhancedPoints is empty AND context is not loading AND context has points
-        if (aiEnhancedPoints.length === 0 && !contextIsLoading && contextPoints.length > 0) {
-            const mappedContextPoints = contextPoints.map(dp => ({
-                ...dp, // dp is already DataPointConfig with IconComponent
-                iconName: getIconName(dp.icon) || 'Sigma', // Ensure iconName for editing
-                source: (dp as ExtendedDataPointConfig).source || 'db' // Mark source
-            } as ExtendedDataPointConfig));
-            setAiEnhancedPoints(mappedContextPoints);
-            addLogEntry('system', `Initialized DatapointDiscoveryStep with ${mappedContextPoints.length} points from onboarding context.`);
-        } else if (aiEnhancedPoints.length === 0 && !contextIsLoading && contextPoints.length === 0) {
-            // Context is loaded but has no points (e.g. fresh setup, migration script not run yet)
-            addLogEntry('system', 'Initialized DatapointDiscoveryStep: No existing data points found in context.');
-            setAiEnhancedPoints([]); // Ensure it's empty
-        }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [configuredDataPoints, isLoading, addLogEntry]); // React to context's points and loading state
-
-    const [editingPoint, setEditingPoint] = useState<ExtendedDataPointConfig | null>(null);
-    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-    const [userProvidedGeminiKey, setUserProvidedGeminiKey] = useState<string>('');
-    const [showGeminiKeyInput, setShowGeminiKeyInput] = useState<boolean>(false);
-    const [aiConsentGiven, setAiConsentGiven] = useState<boolean>(false);
-
-
-    // --- Function to add chat messages (Requirement 6 & 7 - part) ---
-    const addChatMessage = useCallback((message: Omit<ChatMessage, 'id' | 'timestamp'>) => {
-        setChatMessages(prev => {
-            const newMessages = [
-                ...prev,
-                {
-                    ...message,
-                    id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-                    timestamp: formatChatMessageTimestamp(),
-                }
-            ];
-            // Keep only the last 50 messages to prevent performance issues
-            if (newMessages.length > 50) return newMessages.slice(-50);
-            return newMessages;
-        });
-    }, []);
 
     const addLogEntry = useCallback((type: ProcessingLogEntry['type'], message: string, details?: string) => {
         setProcessLog(prev => {
@@ -1238,6 +1204,16 @@ export default function DatapointDiscoveryStep() { // Renamed component
         const min = rowData.min !== undefined && rowData.min !== null && rowData.min !== '' ? parseFloat(rowData.min) : undefined;
         const max = rowData.max !== undefined && rowData.max !== null && rowData.max !== '' ? parseFloat(rowData.max) : undefined;
         const factor = rowData.factor !== undefined && rowData.factor !== null && rowData.factor !== '' ? parseFloat(rowData.factor) : undefined;
+        
+        // Parse enumSet if it exists
+        let enumSet: string[] | undefined = undefined;
+        if (rowData.enumSet) {
+            try {
+                enumSet = typeof rowData.enumSet === 'string' ? JSON.parse(rowData.enumSet) : rowData.enumSet;
+            } catch (e) {
+                errorDetails.push(`ID: ${id}, Row: ${rowIndex + 1}: Invalid enumSet format. Will be ignored.`);
+            }
+        }
 
         return {
             id,
@@ -1255,6 +1231,7 @@ export default function DatapointDiscoveryStep() { // Renamed component
             phase: rowData.phase?.toString().trim() as DataPointConfig['phase'] || undefined,
             notes: rowData.notes?.toString().trim() || undefined,
             label: rowData.label?.toString().trim() || rowData.name?.toString().trim() || id,
+            enumSet: enumSet,
         };
     };
     const currentPointsToDisplay: ExtendedDataPointConfig[] = aiEnhancedPoints.length > 0
@@ -1356,18 +1333,18 @@ export default function DatapointDiscoveryStep() { // Renamed component
                             label: restOfPointFromFile.label || restOfPointFromFile.name || existingPoint?.label || dpFromFilePartial.id,
                             data_type: (restOfPointFromFile.dataType || existingPoint?.dataType || 'String') as DataPointDefinitionDB['data_type'],
                             ui_type: (restOfPointFromFile.uiType || existingPoint?.uiType || 'display') as DataPointDefinitionDB['ui_type'],
-                            icon_name: iconNameFromFile || existingPoint?.iconName || 'Sigma',
+                            icon_name: iconNameFromFile || (typeof existingPoint?.iconName === 'string' ? existingPoint.iconName : null) || 'Sigma',
                             unit: restOfPointFromFile.unit || existingPoint?.unit || null,
                             min_val: restOfPointFromFile.min !== undefined ? Number(restOfPointFromFile.min) : (existingPoint?.min !== undefined ? Number(existingPoint.min) : null),
                             max_val: restOfPointFromFile.max !== undefined ? Number(restOfPointFromFile.max) : (existingPoint?.max !== undefined ? Number(existingPoint.max) : null),
                             description: restOfPointFromFile.description || existingPoint?.description || null,
                             category: restOfPointFromFile.category || existingPoint?.category || 'General',
                             factor: restOfPointFromFile.factor !== undefined ? Number(restOfPointFromFile.factor) : (existingPoint?.factor !== undefined ? Number(existingPoint.factor) : null),
-                            precision_val: restOfPointFromFile.precision !== undefined ? Number(restOfPointFromFile.precision) : (existingPoint?.precision !== undefined ? Number(existingPoint.precision) : null),
-                            is_writable: typeof restOfPointFromFile.isWritable === 'boolean' ? restOfPointFromFile.isWritable : (typeof existingPoint?.isWritable === 'boolean' ? existingPoint.isWritable : false),
+                            precision_val: existingPoint?.precision !== undefined ? Number(existingPoint.precision) : null,
+                            is_writable: typeof existingPoint?.isWritable === 'boolean' ? existingPoint.isWritable : false,
                             decimal_places: restOfPointFromFile.decimalPlaces !== undefined ? Number(restOfPointFromFile.decimalPlaces) : (existingPoint?.decimalPlaces !== undefined ? Number(existingPoint.decimalPlaces) : null),
                             enum_set_json: restOfPointFromFile.enumSet ? JSON.stringify(restOfPointFromFile.enumSet) : (existingPoint?.enumSet ? JSON.stringify(existingPoint.enumSet) : null),
-                            phase: (restOfPointFromFile.phase || existingPoint?.phase || null) as DataPointDefinitionDB['phase'],
+                            decimal_places: existingPoint?.decimalPlaces !== undefined ? Number(existingPoint.decimalPlaces) : null,
                             is_single_phase: typeof restOfPointFromFile.isSinglePhase === 'boolean' ? restOfPointFromFile.isSinglePhase : (typeof existingPoint?.isSinglePhase === 'boolean' ? existingPoint.isSinglePhase : null),
                             three_phase_group: restOfPointFromFile.threePhaseGroup || existingPoint?.threePhaseGroup || null,
                             notes: restOfPointFromFile.notes || existingPoint?.notes || null,
@@ -1519,56 +1496,6 @@ export default function DatapointDiscoveryStep() { // Renamed component
 
         setManualFormErrors(errors);
         return !errors.id && !errors.name && !errors.nodeId && !errors.min && !errors.max && !errors.factor;
-    };
-
-    const handleSaveManualDataPoint = () => {
-        if (!validateManualForm()) {
-            toast.error("Validation Error", { description: "Please fix the errors marked in the form." });
-            return;
-        }
-
-        const iconString = manualDataPoint.icon?.trim() || initialManualDataPointState.icon || 'Tag';
-        const IconComponent = getIconComponent(iconString) || DEFAULT_ICON;
-        const iconName = iconString || (DEFAULT_ICON as any)?.displayName?.replace("Icon", "") || "Tag";
-
-        const finalLabel = manualDataPoint.label?.trim() || manualDataPoint.name!.trim() || manualDataPoint.id!;
-
-        const parseNumericField = (value?: string): number | undefined => {
-            if (value === undefined || value.trim() === '') return undefined;
-            const num = Number(value);
-            return isNaN(num) ? undefined : num;
-        };
-
-        const newPoint: ExtendedDataPointConfig = {
-            id: manualDataPoint.id!.trim(),
-            name: manualDataPoint.name!.trim(),
-            nodeId: manualDataPoint.nodeId!.trim(),
-            label: finalLabel,
-            dataType: manualDataPoint.dataType as DataPointConfig['dataType'],
-            uiType: manualDataPoint.uiType as DataPointConfig['uiType'],
-            icon: IconComponent,
-            iconName: iconName,
-            unit: manualDataPoint.unit?.trim() || undefined,
-            min: parseNumericField(manualDataPoint.min),
-            max: parseNumericField(manualDataPoint.max),
-            description: manualDataPoint.description?.trim() || undefined,
-            category: manualDataPoint.category?.trim() || 'General',
-            factor: parseNumericField(manualDataPoint.factor),
-            phase: manualDataPoint.phase?.trim() as DataPointConfig['phase'] || undefined,
-            notes: manualDataPoint.notes?.trim() || undefined,
-            source: 'manual',
-        };
-
-        if (aiEnhancedPoints.length > 0 || configuredDataPoints.length === 0) {
-            setAiEnhancedPoints(prev => [...prev, newPoint]);
-        } else {
-            setConfiguredDataPoints(prev => [...prev, newPoint]);
-        }
-        addLogEntry('info', `Manually added data point: '${newPoint.name}' (ID: ${newPoint.id}).`); // Requirement 3.1
-        toast.success(`Data point "${newPoint.name}" added successfully!`);
-        setShowManualForm(false);
-        setManualDataPoint(initialManualDataPointState);
-        setManualFormErrors({});
     };
 
     const handleCancelManualForm = () => {
@@ -2541,4 +2468,15 @@ export default function DatapointDiscoveryStep() { // Renamed component
             </Dialog>
         </motion.div>
     );
+}
+
+function getIconName(icon: IconComponentType): string | undefined {
+    if (!icon || typeof icon !== 'function') return undefined;
+    
+    // Get the function name or displayName
+    const componentName = icon.displayName || icon.name;
+    if (!componentName) return undefined;
+    
+    // Remove "Icon" suffix if it exists (some icon libraries add this)
+    return componentName.replace(/Icon$/, '');
 }

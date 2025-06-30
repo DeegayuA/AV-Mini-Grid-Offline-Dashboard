@@ -1,7 +1,7 @@
 // components/PowerTimelineGraph.tsx
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, JSX } from 'react';
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine, LegendType } from 'recharts';
 import { motion, AnimatePresence, useSpring, useTransform } from 'framer-motion';
 import { NodeData } from '@/app/DashboardData/dashboardInterfaces';
@@ -165,10 +165,10 @@ const unitToFactorMap: Record<PowerUnit, number> = { W: 1, kW: 1000, MW: 1000000
 const convertToWatts = (v: number, u?: string): number => { if (typeof v !== 'number' || !isFinite(v)) return 0; if (typeof u !== 'string' || !u.trim()) return v; const unitClean = u.trim().toUpperCase() as PowerUnit | string; const factor = unitToFactorMap[unitClean as PowerUnit]; return factor !== undefined ? v * factor : v; };
 const convertFromWatts = (v: number, targetUnit: PowerUnit): number => { if (typeof v !== 'number' || !isFinite(v)) return 0; return v / (unitToFactorMap[targetUnit] || 1);};
 
-const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
+const PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
     nodeValues, allPossibleDataPoints, generationDpIds, usageDpIds, exportDpIds,
     exportMode, timeScale, isLiveSourceAvailable = true, useDemoDataSource = false,
-}) => {
+}): JSX.Element => {
     const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
     const { resolvedTheme } = useTheme();
     const [isGraphReady, setIsGraphReady] = useState(false);
@@ -204,6 +204,8 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
 
     const effectiveUseDemoData = useMemo(() => useDemoDataSource && !isForcedLiveUiButtonActive && historicalTimeOffsetMs === 0, [useDemoDataSource, isForcedLiveUiButtonActive, historicalTimeOffsetMs]);
     const effectiveIsLive = useMemo(() => (isLiveSourceAvailable || isForcedLiveUiButtonActive) && !effectiveUseDemoData && historicalTimeOffsetMs === 0, [isLiveSourceAvailable, isForcedLiveUiButtonActive, effectiveUseDemoData, historicalTimeOffsetMs]);
+
+    const dpsAreConfigured = generationDpIds.length > 0 && usageDpIds.length > 0;
 
     const processDataPoint = useCallback((timestamp: number, gen: number, use: number, gridFeedVal: number): ChartDataPoint => {
       return {
@@ -287,8 +289,6 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
 
       return () => { if (demoDataIngestTimer.current) { clearInterval(demoDataIngestTimer.current); demoDataIngestTimer.current = null; }};
     }, [nodeValues, generationDpIds, usageDpIds, exportDpIds, exportMode, allPossibleDataPoints, sumValuesForDpIds, generateDemoValues, effectiveIsLive, effectiveUseDemoData, processDataPoint]);
-
-    const dpsAreConfigured = useMemo(() => generationDpIds.length > 0 && usageDpIds.length > 0, [generationDpIds, usageDpIds]);
 
     const loadHistoricalDataIntoBuffer = useCallback(async (viewStartTime: number, viewEndTime: number) => {
         if (!dpsAreConfigured && !useDemoDataSource) { // Allow demo data to proceed without dpsConfigured
@@ -528,7 +528,7 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
               setLastUpdatedDisplayTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
             }
 
-            if (!isGraphReady && dpsConfigured && ( (effectiveUseDemoData || effectiveIsLive) && pointsForGraph.length > 0) || (!effectiveIsLive && !effectiveUseDemoData)) {
+            if (!isGraphReady && dpsAreConfigured && ( (effectiveUseDemoData || effectiveIsLive) && pointsForGraph.length > 0) || (!effectiveIsLive && !effectiveUseDemoData)) {
                  setIsGraphReady(true);
             }
 
@@ -543,14 +543,14 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
         };
 
         if (graphUpdateTimer.current) { clearInterval(graphUpdateTimer.current); graphUpdateTimer.current = null; }
-        if (!dpsConfigured && (effectiveIsLive || effectiveUseDemoData)) {
+        if (!dpsAreConfigured && (effectiveIsLive || effectiveUseDemoData)) {
             setIsGraphReady(false);
             setChartData([]);
             return;
         }
         updateAndRenderGraph();
         if ((effectiveIsLive || effectiveUseDemoData) && historicalTimeOffsetMs === 0) {
-            if (dpsConfigured) {
+            if (dpsAreConfigured) {
                 const { liveUpdateIntervalMs } = timeScaleConfig[timeScale];
                 graphUpdateTimer.current = setInterval(updateAndRenderGraph, liveUpdateIntervalMs);
             }
@@ -562,10 +562,9 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
         let liveGen = 0, liveUse = 0, liveGridFeedVal = 0;
         let currentTimestamp = Date.now();
         let isSufficient = false;
-        const dpsConfigured = generationDpIds.length > 0 && usageDpIds.length > 0;
 
         if (historicalTimeOffsetMs > 0 && chartData.length > 0) {
-            const lastPointInView = chartData[chartData.length -1];
+            const lastPointInView = chartData[chartData.length - 1];
             if (lastPointInView) {
                 liveGen = lastPointInView.generation;
                 liveUse = lastPointInView.usage;
@@ -573,16 +572,13 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
                 currentTimestamp = lastPointInView.timestamp;
                 isSufficient = lastPointInView.isSelfSufficient ?? liveGridFeedVal >= 0;
             }
-        } else if (effectiveUseDemoData && dpsConfigured) {
-            const lastDemoPoint = dataBufferRef.current.length > 0 ? dataBufferRef.current[dataBufferRef.current.length - 1] : null;
-            if (lastDemoPoint && lastDemoPoint.timestamp > Date.now() - 5000) {
-                liveGen = lastDemoPoint.generation; liveUse = lastDemoPoint.usage; liveGridFeedVal = lastDemoPoint.gridFeed;
-            } else {
-                const demo = generateDemoValues();
-                liveGen = demo.generation; liveUse = demo.usage; liveGridFeedVal = demo.gridFeed;
-            }
+        } else if (effectiveUseDemoData && dpsAreConfigured) {
+            const demo = generateDemoValues();
+            liveGen = demo.generation; 
+            liveUse = demo.usage; 
+            liveGridFeedVal = demo.gridFeed;
             isSufficient = liveGridFeedVal >= 0;
-        } else if (effectiveIsLive && dpsConfigured && nodeValues && Object.keys(nodeValues).length > 0 && allPossibleDataPoints && allPossibleDataPoints.length > 0) {
+        } else if (effectiveIsLive && dpsAreConfigured && nodeValues && Object.keys(nodeValues).length > 0 && allPossibleDataPoints && allPossibleDataPoints.length > 0) {
             liveGen = sumValuesForDpIds(generationDpIds);
             liveUse = sumValuesForDpIds(usageDpIds);
             if (exportMode === 'manual' && exportDpIds.length > 0) {
@@ -593,23 +589,30 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
             isSufficient = liveGridFeedVal >= 0;
         } else if (chartData.length > 0) {
             const pointSource = chartData[chartData.length - 1];
-            liveGen = pointSource.generation; liveUse = pointSource.usage; liveGridFeedVal = pointSource.gridFeed;
-            currentTimestamp = pointSource.timestamp; isSufficient = pointSource.isSelfSufficient ?? liveGridFeedVal >= 0;
-        } else if (dataBufferRef.current.length > 0 && !dpsConfigured) {
-             const pointSource = dataBufferRef.current[dataBufferRef.current.length - 1];
-             liveGen = pointSource.generation; liveUse = pointSource.usage; liveGridFeedVal = pointSource.gridFeed;
-             currentTimestamp = pointSource.timestamp; isSufficient = pointSource.isSelfSufficient ?? liveGridFeedVal >= 0;
+            liveGen = pointSource.generation; 
+            liveUse = pointSource.usage; 
+            liveGridFeedVal = pointSource.gridFeed;
+            currentTimestamp = pointSource.timestamp; 
+            isSufficient = pointSource.isSelfSufficient ?? liveGridFeedVal >= 0;
+        } else if (dataBufferRef.current.length > 0) {
+            const pointSource = dataBufferRef.current[dataBufferRef.current.length - 1];
+            liveGen = pointSource.generation;
+            liveUse = pointSource.usage;
+            liveGridFeedVal = pointSource.gridFeed;
+            currentTimestamp = pointSource.timestamp; 
+            isSufficient = pointSource.isSelfSufficient ?? liveGridFeedVal >= 0;
         }
 
         return {
             generation: parseFloat(liveGen.toFixed(valuePrecision)),
             usage: parseFloat(liveUse.toFixed(valuePrecision)),
             gridFeed: parseFloat(liveGridFeedVal.toFixed(valuePrecision)),
-            timestamp: currentTimestamp, isSelfSufficient: isSufficient,
+            timestamp: currentTimestamp, 
+            isSelfSufficient: isSufficient,
         };
     }, [
         nodeValues, allPossibleDataPoints, chartData, generationDpIds, usageDpIds, exportDpIds, exportMode,
-        valuePrecision, sumValuesForDpIds, generateDemoValues, effectiveIsLive, effectiveUseDemoData,
+        sumValuesForDpIds, generateDemoValues, effectiveIsLive, effectiveUseDemoData,
         historicalTimeOffsetMs, dataBufferRef.current.length
     ]);
 
@@ -861,12 +864,14 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
         }
         return itemsToShow;
     }, [visibleLines, resolvedTheme]);
-
-
-    const dpsAreConfigured = generationDpIds.length > 0 && usageDpIds.length > 0;
-
     if (!effectiveUseDemoData && !dpsAreConfigured) {
-        return <div className="flex items-center justify-center h-full text-muted-foreground p-4 text-center">Please configure Generation and Usage data points.</div>;
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4 space-y-2 min-h-[300px]">
+                <AlertTriangleIcon className="h-8 w-8 text-amber-500" />
+                <span>Configuration required</span>
+                <span className="text-xs max-w-md text-center">Please configure data points for generation and usage.</span>
+            </div>
+        );
     }
 
     // Handle historical loading and error states before other checks
@@ -1151,7 +1156,11 @@ const  PowerTimelineGraph: React.FC<PowerTimelineGraphProps> = ({
                             ))}
                         </ComposedChart>
                     </ChartContainer>
-                     ) : null }
+                     ) : (
+                        <div className="flex items-center justify-center h-full text-muted-foreground">
+                            <span className="text-sm">No data to display</span>
+                        </div>
+                     )}
                 </motion.div>
             </AnimatePresence>
         </motion.div>

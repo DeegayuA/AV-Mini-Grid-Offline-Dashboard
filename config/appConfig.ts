@@ -1,7 +1,30 @@
 // src/config/appConfig.ts
 import logo from "@/AV_logo.png"; // This is a StaticImageData object from next/image
 import logoSvg from "@/av_logo.svg"; // This is also a StaticImageData object if imported similarly
-import { APP_AUTHOR, APP_NAME, PLANT_CAPACITY, PLANT_LOCATION, PLANT_NAME } from "./constants";
+import { useAppStore } from "@/stores/appStore";
+// Plant and Application Configuration - These are now fetched from DB via appStore
+// Import the hook to access app constants from the store
+
+// Helper function to get app constants (use this in components)
+export const useAppConstants = () => {
+    const { appConstants, isLoadingAppConstants } = useAppStore();
+    
+    return {
+        APP_NAME: appConstants.APP_NAME || "AV Mini Grid Dashboard", // Fallback
+        APP_AUTHOR: appConstants.APP_AUTHOR || "Alta Vision", // Fallback
+        PLANT_NAME: appConstants.PLANT_NAME || "Sample Plant", // Fallback
+        PLANT_LOCATION: appConstants.PLANT_LOCATION || "Sample Location", // Fallback
+        PLANT_CAPACITY: appConstants.PLANT_CAPACITY || "1 MW", // Fallback
+        isLoading: isLoadingAppConstants
+    };
+};
+
+// For server-side or static contexts where hooks can't be used, keep fallbacks
+export const APP_NAME_FALLBACK = "AV Mini Grid Dashboard";
+export const APP_AUTHOR_FALLBACK = "Alta Vision";
+export const PLANT_NAME_FALLBACK = "Sample Plant";
+export const PLANT_LOCATION_FALLBACK = "Sample Location";
+export const PLANT_CAPACITY_FALLBACK = "1 MW";
 
 
 // URLs - IMPORTANT: For SEO/OG tags, BASE_URL should be your production domain

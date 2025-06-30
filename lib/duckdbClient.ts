@@ -454,7 +454,7 @@ export async function deleteConstant(key: string): Promise<boolean> {
     await ensureSchemaInitialized();
     const conn = await getDBConnection();
     try {
-        await conn.exec(`DELETE FROM constants WHERE key = '${key.replace(/'/g, "''")}';`);
+        await conn.run(`DELETE FROM constants WHERE key = ?`, key);
         return true; // Assume success if no error
     } catch (error) {
         console.error(`Error deleting constant ${key}:`, error);
