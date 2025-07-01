@@ -3,7 +3,7 @@
 
 import './globals.css';
 import { ThemeProvider } from 'next-themes';
-import { Inter } from 'next/font/google';
+// import { Inter } from 'next/font/google'; // Removed
 import React, { useEffect, useState } from 'react';
 import LoadingScreen from '@/components/LoadingScreen';
 import { Toaster } from "@/components/ui/sonner";
@@ -19,7 +19,7 @@ import NotificationSystemProvider from '@/components/NotificationSystemProvider'
 import ActiveAlarmsDisplay from '@/components/ActiveAlarmsDisplay'; // Import the new display component
 import AppInitializer from '@/components/AppInitializer'; // Import the AppInitializer
 
-const inter = Inter({ subsets: ['latin'] });
+// const inter = Inter({ subsets: ['latin'] }); // Removed
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true); // Start with loading true
@@ -82,7 +82,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="canonical" href={APP_URL} />
         <meta name="robots" content="noindex, nofollow" />
       </head>
-      <body className={inter.className}>
+      {/* <body className={inter.className}> Changed to body below */}
+      <body>
         {isLoading && <LoadingScreen onDone={() => setIsLoading(false)} />}
         <ThemeProvider attribute="class"> {/* Removed !isLoading condition here to always render ThemeProvider */}
           <AppInitializer /> {/* Initialize app store data points */}
